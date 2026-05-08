@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://172.20.10.6:4000";
+const API_BASE_URL = "https://hidden-tunes-backend.onrender.com";
 
 export type BackendYouTubeTrack = {
   id: string;
@@ -23,11 +23,7 @@ function normalizeBackendTrack(item: unknown): BackendYouTubeTrack | null {
   const track = item as Record<string, any>;
 
   const rawId =
-    track.id ||
-    track.videoId ||
-    track.url ||
-    track.webpage_url ||
-    "";
+    track.id || track.videoId || track.url || track.webpage_url || "";
 
   const id = String(rawId)
     .replace("https://www.youtube.com/watch?v=", "")
@@ -105,7 +101,7 @@ async function fetchJson(url: string): Promise<any | null> {
 
 export async function checkYouTubeBackendStatus(): Promise<BackendStatus> {
   try {
-    const response = await fetch(API_BASE_URL);
+    const response = await fetch(`${API_BASE_URL}/api/health`);
     const text = await response.text();
 
     if (!response.ok) {
@@ -118,9 +114,7 @@ export async function checkYouTubeBackendStatus(): Promise<BackendStatus> {
 
     return {
       online: true,
-      statusText: text.includes("Hidden Tunes")
-        ? "Online"
-        : "Online",
+      statusText: text.includes("connected") ? "Online" : "Online",
       baseUrl: API_BASE_URL,
     };
   } catch (error) {
@@ -164,9 +158,7 @@ export async function getHiddenTunesYouTubeCatalog(): Promise<
   return safeTracks(data);
 }
 
-export async function getYouTubeBackendStream(
-  videoId: string
-): Promise<string> {
+export async function getYouTubeBackendStream(videoId: string): Promise<string> {
   const safeVideoId = String(videoId || "").trim();
 
   if (!safeVideoId) {
@@ -188,8 +180,6 @@ export async function getYouTubeBackendStream(
   return streamUrl;
 }
 
-export async function getYouTubeAudioUrl(
-  videoId: string
-): Promise<string> {
+export async function getYouTubeAudioUrl(videoId: string): Promise<string> {
   return getYouTubeBackendStream(videoId);
 }
