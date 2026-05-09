@@ -14,57 +14,45 @@ const HIDDEN_TUNES_CHANNEL_URL =
   process.env.HIDDEN_TUNES_CHANNEL_URL ||
   "https://www.youtube.com/@HiddenTunes/videos";
 
-const HIDDEN_TUNES_PLAYLIST_URL =
-  process.env.HIDDEN_TUNES_PLAYLIST_URL || "";
+const HIDDEN_TUNES_CHANNEL_ID =
+  process.env.HIDDEN_TUNES_CHANNEL_ID || "";
 
 function extractYouTubeId(value) {
   const text = String(value || "").trim();
 
   if (!text) return "";
 
-  if (/^[a-zA-Z0-9_-]{11}$/.test(text)) {
-    return text;
-  }
+  if (/^[a-zA-Z0-9_-]{11}$/.test(text)) return text;
 
   try {
     const url = new URL(text);
 
-    if (url.hostname.includes("youtube.com")) {
-      const id = url.searchParams.get("v");
+    const watchId = url.searchParams.get("v");
+    if (watchId && /^[a-zA-Z0-9_-]{11}$/.test(watchId)) return watchId;
 
-      if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) {
-        return id;
-      }
+    const shortsMatch = url.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+    if (shortsMatch?.[1]) return shortsMatch[1];
 
-      const shortsMatch = url.pathname.match(
-        /\/shorts\/([a-zA-Z0-9_-]{11})/
-      );
-
-      if (shortsMatch?.[1]) {
-        return shortsMatch[1];
-      }
-
-      const embedMatch = url.pathname.match(
-        /\/embed\/([a-zA-Z0-9_-]{11})/
-      );
-
-      if (embedMatch?.[1]) {
-        return embedMatch[1];
-      }
-    }
+    const embedMatch = url.pathname.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+    if (embedMatch?.[1]) return embedMatch[1];
 
     if (url.hostname.includes("youtu.be")) {
       const id = url.pathname.replace("/", "").trim();
-
-      if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) {
-        return id;
-      }
+      if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
     }
   } catch {}
 
   const match = text.match(/[a-zA-Z0-9_-]{11}/);
-
   return match ? match[0] : "";
+}
+
+function decodeXml(value = "") {
+  return String(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 function normalizeYouTubeItem(item) {
@@ -130,6 +118,70 @@ function dedupeTracks(tracks) {
   });
 }
 
+async function resolveChannelIdFromHandle(channelUrl) {
+  if (HIDDEN_TUNES_CHANNEL_ID) return HIDDEN_TUNES_CHANNEL_ID;
+
+  const response = await fetch(channelUrl.replace("/videos", ""));
+  const html = await response.text();
+
+  const patterns = [
+    /"channelId":"(UC[a-zA-Z0-9_-]+)"/,
+    /"externalId":"(UC[a-zA-Z0-9_-]+)"/,
+    /<meta itemprop="channelId" content="(UC[a-zA-Z0-9_-]+)">/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return "";
+}
+
+async function fetchHiddenTunesRss(limit = 20) {
+  const safeLimit = Math.min(Number(limit || 20), 20);
+  const channelId = await resolveChannelIdFromHandle(HIDDEN_TUNES_CHANNEL_URL);
+
+  if (!channelId) {
+    return {
+      source: HIDDEN_TUNES_CHANNEL_URL,
+      mode: "rss_channel_id_missing",
+      tracks: [],
+    };
+  }
+
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  const response = await fetch(feedUrl);
+  const xml = await response.text();
+
+  const entries = xml.match(/<entry>[\s\S]*?<\/entry>/g) || [];
+
+  const tracks = entries
+    .map((entry) => {
+      const videoId = entry.match(/<yt:videoId>(.*?)<\/yt:videoId>/)?.[1] || "";
+      const title = decodeXml(entry.match(/<title>(.*?)<\/title>/)?.[1] || "");
+      const channelTitle = decodeXml(
+        entry.match(/<name>(.*?)<\/name>/)?.[1] || "Hidden Tunes"
+      );
+
+      return normalizeYouTubeItem({
+        id: videoId,
+        videoId,
+        title,
+        artist: channelTitle,
+        channelTitle,
+        thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+      });
+    })
+    .filter(Boolean);
+
+  return {
+    source: feedUrl,
+    mode: "youtube_rss",
+    tracks: dedupeTracks(tracks).slice(0, safeLimit),
+  };
+}
+
 async function searchYouTube(query, limit = 20) {
   const safeLimit = Math.min(Number(limit || 20), 20);
 
@@ -148,63 +200,11 @@ async function searchYouTube(query, limit = 20) {
   return dedupeTracks(tracks);
 }
 
-async function fetchYouTubeList(url, limit = 20) {
-  if (!url) return [];
-
-  const safeLimit = Math.min(Number(limit || 20), 20);
-
-  const result = await ytdlp(url, {
-    dumpSingleJson: true,
-    skipDownload: true,
-    noWarnings: true,
-    flatPlaylist: true,
-    playlistEnd: safeLimit,
-  });
-
-  const entries = Array.isArray(result?.entries) ? result.entries : [];
-
-  const tracks = entries.map(normalizeYouTubeItem).filter(Boolean);
-
-  return dedupeTracks(tracks).slice(0, safeLimit);
-}
-
-async function getHiddenTunesCatalog(limit = 20) {
-  const safeLimit = Math.min(Number(limit || 20), 20);
-
-  const sources = [
-    HIDDEN_TUNES_PLAYLIST_URL,
-    HIDDEN_TUNES_CHANNEL_URL,
-  ].filter(Boolean);
-
-  for (const source of sources) {
-    try {
-      console.log("Hidden Tunes source:", source);
-
-      const tracks = await fetchYouTubeList(source, safeLimit);
-
-      if (tracks.length > 0) {
-        return {
-          source,
-          mode: source.includes("playlist") ? "playlist" : "channel",
-          tracks,
-        };
-      }
-    } catch (error) {
-      console.log("Hidden Tunes source failed:", source, error.message);
-    }
-  }
-
-  return {
-    source: "none",
-    mode: "empty",
-    tracks: [],
-  };
-}
-
 app.get("/", (req, res) => {
   res.json({
     status: "Hidden Tunes backend running",
     playback: "YouTube WebView discovery",
+    hiddenTunesCatalog: "YouTube RSS feed, no yt-dlp",
     nativeAudio: "R2/Audius/Archive only",
     routes: [
       "/api/youtube/search?q=burna",
@@ -280,8 +280,7 @@ app.get("/api/youtube/trending", async (req, res) => {
 app.get("/api/youtube/hidden-tunes", async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 20), 20);
-
-    const catalog = await getHiddenTunesCatalog(limit);
+    const catalog = await fetchHiddenTunesRss(limit);
 
     res.json({
       title: "Hidden Tunes Catalog",
@@ -295,6 +294,7 @@ app.get("/api/youtube/hidden-tunes", async (req, res) => {
     res.status(500).json({
       error: "Hidden Tunes catalog failed",
       details: error.message,
+      tracks: [],
     });
   }
 });
