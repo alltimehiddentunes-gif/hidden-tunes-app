@@ -10,24 +10,10 @@ app.use(express.json());
 
 const streamCache = new Map();
 
-/**
- * IMPORTANT:
- * Replace with your REAL YouTube channel URL.
- *
- * Examples:
- * https://www.youtube.com/@HiddenTunes/videos
- * https://www.youtube.com/@CaasiWills/videos
- * https://www.youtube.com/channel/UCXXXX/videos
- */
 const HIDDEN_TUNES_CHANNEL_URL =
   process.env.HIDDEN_TUNES_CHANNEL_URL ||
   "https://www.youtube.com/@HiddenTunes/videos";
 
-/**
- * Optional:
- * Put your uploads playlist here if you have one.
- * Playlist loading is often more reliable.
- */
 const HIDDEN_TUNES_PLAYLIST_URL =
   process.env.HIDDEN_TUNES_PLAYLIST_URL || "";
 
@@ -97,14 +83,8 @@ function normalizeYouTubeItem(item) {
   const title = String(item.title || "Unknown Title").trim();
 
   if (!title) return null;
-
-  if (title.toLowerCase().includes("deleted video")) {
-    return null;
-  }
-
-  if (title.toLowerCase().includes("private video")) {
-    return null;
-  }
+  if (title.toLowerCase().includes("deleted video")) return null;
+  if (title.toLowerCase().includes("private video")) return null;
 
   const artist =
     item.artist ||
@@ -123,23 +103,17 @@ function normalizeYouTubeItem(item) {
   return {
     id: `youtube-${id}`,
     videoId: id,
-
     title,
     artist,
     channelTitle: artist,
-
     thumbnail,
     artwork: thumbnail,
     cover: thumbnail,
-
     sourceName: "YouTube",
     source: "youtube",
-
     isYouTube: true,
     isOnline: true,
-
     type: "youtube_video",
-
     duration: item.duration || item.duration_string || undefined,
   };
 }
@@ -149,19 +123,17 @@ function dedupeTracks(tracks) {
 
   return tracks.filter((track) => {
     if (!track?.videoId) return false;
-
-    if (seen.has(track.videoId)) {
-      return false;
-    }
+    if (seen.has(track.videoId)) return false;
 
     seen.add(track.videoId);
-
     return true;
   });
 }
 
 async function searchYouTube(query, limit = 20) {
-  const result = await ytdlp(`ytsearch${limit}:${query}`, {
+  const safeLimit = Math.min(Number(limit || 20), 20);
+
+  const result = await ytdlp(`ytsearch${safeLimit}:${query}`, {
     dumpSingleJson: true,
     skipDownload: true,
     noWarnings: true,
@@ -176,32 +148,29 @@ async function searchYouTube(query, limit = 20) {
   return dedupeTracks(tracks);
 }
 
-async function fetchYouTubeList(url, limit = 100) {
+async function fetchYouTubeList(url, limit = 20) {
   if (!url) return [];
+
+  const safeLimit = Math.min(Number(limit || 20), 20);
 
   const result = await ytdlp(url, {
     dumpSingleJson: true,
     skipDownload: true,
     noWarnings: true,
-
-    extractFlat: true,
     flatPlaylist: true,
-
-    playlistEnd: limit,
+    playlistEnd: safeLimit,
   });
 
-  const entries = Array.isArray(result?.entries)
-    ? result.entries
-    : [];
+  const entries = Array.isArray(result?.entries) ? result.entries : [];
 
-  const tracks = entries
-    .map(normalizeYouTubeItem)
-    .filter(Boolean);
+  const tracks = entries.map(normalizeYouTubeItem).filter(Boolean);
 
-  return dedupeTracks(tracks).slice(0, limit);
+  return dedupeTracks(tracks).slice(0, safeLimit);
 }
 
-async function getHiddenTunesCatalog(limit = 100) {
+async function getHiddenTunesCatalog(limit = 20) {
+  const safeLimit = Math.min(Number(limit || 20), 20);
+
   const sources = [
     HIDDEN_TUNES_PLAYLIST_URL,
     HIDDEN_TUNES_CHANNEL_URL,
@@ -211,60 +180,17 @@ async function getHiddenTunesCatalog(limit = 100) {
     try {
       console.log("Hidden Tunes source:", source);
 
-      const tracks = await fetchYouTubeList(source, limit);
+      const tracks = await fetchYouTubeList(source, safeLimit);
 
       if (tracks.length > 0) {
         return {
           source,
-          mode: source.includes("playlist")
-            ? "playlist"
-            : "channel",
+          mode: source.includes("playlist") ? "playlist" : "channel",
           tracks,
         };
       }
     } catch (error) {
-      console.log(
-        "Hidden Tunes source failed:",
-        source,
-        error.message
-      );
-    }
-  }
-
-  /**
-   * FALLBACK SEARCHES
-   */
-
-  const fallbackQueries = [
-    "Caasi Wills official music",
-    "Caasi Wills official audio",
-    "Hidden Tunes Caasi Wills",
-    "Caasi Wills songs",
-    "Hidden Tunes official",
-  ];
-
-  for (const query of fallbackQueries) {
-    try {
-      console.log("Hidden Tunes fallback:", query);
-
-      const tracks = await searchYouTube(
-        query,
-        Math.min(limit, 30)
-      );
-
-      if (tracks.length > 0) {
-        return {
-          source: query,
-          mode: "search_fallback",
-          tracks,
-        };
-      }
-    } catch (error) {
-      console.log(
-        "Fallback search failed:",
-        query,
-        error.message
-      );
+      console.log("Hidden Tunes source failed:", source, error.message);
     }
   }
 
@@ -280,7 +206,6 @@ app.get("/", (req, res) => {
     status: "Hidden Tunes backend running",
     playback: "YouTube WebView discovery",
     nativeAudio: "R2/Audius/Archive only",
-
     routes: [
       "/api/youtube/search?q=burna",
       "/api/youtube/trending",
@@ -302,8 +227,7 @@ app.get("/api/health", (req, res) => {
 app.get("/api/youtube/search", async (req, res) => {
   try {
     const query = String(req.query.q || "").trim();
-
-    const limit = Number(req.query.limit || 20);
+    const limit = Math.min(Number(req.query.limit || 20), 20);
 
     if (!query) {
       return res.status(400).json({
@@ -329,7 +253,7 @@ app.get("/api/youtube/search", async (req, res) => {
 
 app.get("/api/youtube/trending", async (req, res) => {
   try {
-    const limit = Number(req.query.limit || 30);
+    const limit = Math.min(Number(req.query.limit || 20), 20);
 
     const query = String(
       req.query.q ||
@@ -355,16 +279,14 @@ app.get("/api/youtube/trending", async (req, res) => {
 
 app.get("/api/youtube/hidden-tunes", async (req, res) => {
   try {
-    const limit = Number(req.query.limit || 100);
+    const limit = Math.min(Number(req.query.limit || 20), 20);
 
     const catalog = await getHiddenTunesCatalog(limit);
 
     res.json({
       title: "Hidden Tunes Catalog",
-
       source: catalog.source,
       mode: catalog.mode,
-
       tracks: catalog.tracks,
     });
   } catch (error) {
@@ -386,7 +308,6 @@ async function getM4aUrl(videoId) {
 
   if (streamCache.has(safeVideoId)) {
     console.log("CACHE HIT M4A:", safeVideoId);
-
     return streamCache.get(safeVideoId);
   }
 
@@ -396,26 +317,18 @@ async function getM4aUrl(videoId) {
 
   const rawUrl = await ytdlp(videoUrl, {
     getUrl: true,
-
     noWarnings: true,
     noPlaylist: true,
-
     format: "140/bestaudio[ext=m4a]/bestaudio",
   });
 
-  const streamUrl = String(rawUrl || "")
-    .split("\n")[0]
-    .trim();
+  const streamUrl = String(rawUrl || "").split("\n")[0].trim();
 
   if (!streamUrl) {
     throw new Error("No stream URL returned");
   }
 
   const lower = streamUrl.toLowerCase();
-
-  /**
-   * Reject WEBM for iOS
-   */
 
   if (
     lower.includes("itag=251") ||
@@ -424,9 +337,7 @@ async function getM4aUrl(videoId) {
     lower.includes("audio/webm") ||
     lower.includes("audio%2fwebm")
   ) {
-    throw new Error(
-      "Rejected WEBM. iOS requires m4a/audio mp4."
-    );
+    throw new Error("Rejected WEBM. iOS requires m4a/audio mp4.");
   }
 
   console.log("M4A READY:", safeVideoId);
@@ -438,10 +349,7 @@ async function getM4aUrl(videoId) {
 
 app.get("/api/youtube/audio/:videoId", async (req, res) => {
   try {
-    const safeVideoId = extractYouTubeId(
-      req.params.videoId
-    );
-
+    const safeVideoId = extractYouTubeId(req.params.videoId);
     const streamUrl = await getM4aUrl(safeVideoId);
 
     res.json({
@@ -462,10 +370,7 @@ app.get("/api/youtube/audio/:videoId", async (req, res) => {
 
 app.get("/api/youtube/stream/:videoId", async (req, res) => {
   try {
-    const safeVideoId = extractYouTubeId(
-      req.params.videoId
-    );
-
+    const safeVideoId = extractYouTubeId(req.params.videoId);
     const streamUrl = await getM4aUrl(safeVideoId);
 
     res.json({
@@ -485,7 +390,5 @@ app.get("/api/youtube/stream/:videoId", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `Hidden Tunes backend running on port ${PORT}`
-  );
+  console.log(`Hidden Tunes backend running on port ${PORT}`);
 });
