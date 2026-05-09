@@ -10,39 +10,66 @@ app.use(express.json());
 
 const streamCache = new Map();
 
+/**
+ * YOUR REAL CHANNEL
+ */
+const HIDDEN_TUNES_CHANNEL_ID =
+  process.env.HIDDEN_TUNES_CHANNEL_ID ||
+  "UCr_GiZYfGzmzwdidgKPRWsg";
+
 const HIDDEN_TUNES_CHANNEL_URL =
   process.env.HIDDEN_TUNES_CHANNEL_URL ||
-  "https://www.youtube.com/@HiddenTunes/videos";
+  "https://www.youtube.com/@HiddenTunes-Wills";
 
-const HIDDEN_TUNES_CHANNEL_ID =
-  process.env.HIDDEN_TUNES_CHANNEL_ID || "";
+/**
+ * HELPERS
+ */
 
 function extractYouTubeId(value) {
   const text = String(value || "").trim();
 
   if (!text) return "";
 
-  if (/^[a-zA-Z0-9_-]{11}$/.test(text)) return text;
+  if (/^[a-zA-Z0-9_-]{11}$/.test(text)) {
+    return text;
+  }
 
   try {
     const url = new URL(text);
 
     const watchId = url.searchParams.get("v");
-    if (watchId && /^[a-zA-Z0-9_-]{11}$/.test(watchId)) return watchId;
 
-    const shortsMatch = url.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
-    if (shortsMatch?.[1]) return shortsMatch[1];
+    if (watchId && /^[a-zA-Z0-9_-]{11}$/.test(watchId)) {
+      return watchId;
+    }
 
-    const embedMatch = url.pathname.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
-    if (embedMatch?.[1]) return embedMatch[1];
+    const shortsMatch = url.pathname.match(
+      /\/shorts\/([a-zA-Z0-9_-]{11})/
+    );
+
+    if (shortsMatch?.[1]) {
+      return shortsMatch[1];
+    }
+
+    const embedMatch = url.pathname.match(
+      /\/embed\/([a-zA-Z0-9_-]{11})/
+    );
+
+    if (embedMatch?.[1]) {
+      return embedMatch[1];
+    }
 
     if (url.hostname.includes("youtu.be")) {
       const id = url.pathname.replace("/", "").trim();
-      if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+
+      if (/^[a-zA-Z0-9_-]{11}$/.test(id)) {
+        return id;
+      }
     }
   } catch {}
 
   const match = text.match(/[a-zA-Z0-9_-]{11}/);
+
   return match ? match[0] : "";
 }
 
@@ -71,8 +98,14 @@ function normalizeYouTubeItem(item) {
   const title = String(item.title || "Unknown Title").trim();
 
   if (!title) return null;
-  if (title.toLowerCase().includes("deleted video")) return null;
-  if (title.toLowerCase().includes("private video")) return null;
+
+  if (title.toLowerCase().includes("deleted video")) {
+    return null;
+  }
+
+  if (title.toLowerCase().includes("private video")) {
+    return null;
+  }
 
   const artist =
     item.artist ||
@@ -91,18 +124,27 @@ function normalizeYouTubeItem(item) {
   return {
     id: `youtube-${id}`,
     videoId: id,
+
     title,
     artist,
     channelTitle: artist,
+
     thumbnail,
     artwork: thumbnail,
     cover: thumbnail,
+
     sourceName: "YouTube",
     source: "youtube",
+
     isYouTube: true,
     isOnline: true,
+
     type: "youtube_video",
-    duration: item.duration || item.duration_string || undefined,
+
+    duration:
+      item.duration ||
+      item.duration_string ||
+      undefined,
   };
 }
 
@@ -111,65 +153,72 @@ function dedupeTracks(tracks) {
 
   return tracks.filter((track) => {
     if (!track?.videoId) return false;
-    if (seen.has(track.videoId)) return false;
+
+    if (seen.has(track.videoId)) {
+      return false;
+    }
 
     seen.add(track.videoId);
+
     return true;
   });
 }
 
-async function resolveChannelIdFromHandle(channelUrl) {
-  if (HIDDEN_TUNES_CHANNEL_ID) return HIDDEN_TUNES_CHANNEL_ID;
-
-  const response = await fetch(channelUrl.replace("/videos", ""));
-  const html = await response.text();
-
-  const patterns = [
-    /"channelId":"(UC[a-zA-Z0-9_-]+)"/,
-    /"externalId":"(UC[a-zA-Z0-9_-]+)"/,
-    /<meta itemprop="channelId" content="(UC[a-zA-Z0-9_-]+)">/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) return match[1];
-  }
-
-  return "";
-}
+/**
+ * RSS FEED LOADER
+ * NO yt-dlp
+ * NO bot detection
+ */
 
 async function fetchHiddenTunesRss(limit = 20) {
-  const safeLimit = Math.min(Number(limit || 20), 20);
-  const channelId = await resolveChannelIdFromHandle(HIDDEN_TUNES_CHANNEL_URL);
+  const safeLimit = Math.min(
+    Number(limit || 20),
+    20
+  );
 
-  if (!channelId) {
-    return {
-      source: HIDDEN_TUNES_CHANNEL_URL,
-      mode: "rss_channel_id_missing",
-      tracks: [],
-    };
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${HIDDEN_TUNES_CHANNEL_ID}`;
+
+  console.log("RSS FEED:", feedUrl);
+
+  const response = await fetch(feedUrl);
+
+  if (!response.ok) {
+    throw new Error(
+      `RSS request failed: ${response.status}`
+    );
   }
 
-  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-  const response = await fetch(feedUrl);
   const xml = await response.text();
 
-  const entries = xml.match(/<entry>[\s\S]*?<\/entry>/g) || [];
+  const entries =
+    xml.match(/<entry>[\s\S]*?<\/entry>/g) || [];
 
   const tracks = entries
     .map((entry) => {
-      const videoId = entry.match(/<yt:videoId>(.*?)<\/yt:videoId>/)?.[1] || "";
-      const title = decodeXml(entry.match(/<title>(.*?)<\/title>/)?.[1] || "");
+      const videoId =
+        entry.match(
+          /<yt:videoId>(.*?)<\/yt:videoId>/
+        )?.[1] || "";
+
+      const title = decodeXml(
+        entry.match(/<title>(.*?)<\/title>/)?.[1] ||
+          ""
+      );
+
       const channelTitle = decodeXml(
-        entry.match(/<name>(.*?)<\/name>/)?.[1] || "Hidden Tunes"
+        entry.match(/<name>(.*?)<\/name>/)?.[1] ||
+          "Hidden Tunes"
       );
 
       return normalizeYouTubeItem({
         id: videoId,
         videoId,
+
         title,
+
         artist: channelTitle,
         channelTitle,
+
         thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
       });
     })
@@ -177,21 +226,43 @@ async function fetchHiddenTunesRss(limit = 20) {
 
   return {
     source: feedUrl,
+    channelId: HIDDEN_TUNES_CHANNEL_ID,
+    channelUrl: HIDDEN_TUNES_CHANNEL_URL,
     mode: "youtube_rss",
-    tracks: dedupeTracks(tracks).slice(0, safeLimit),
+    tracks: dedupeTracks(tracks).slice(
+      0,
+      safeLimit
+    ),
   };
 }
 
-async function searchYouTube(query, limit = 20) {
-  const safeLimit = Math.min(Number(limit || 20), 20);
+/**
+ * SEARCH
+ */
 
-  const result = await ytdlp(`ytsearch${safeLimit}:${query}`, {
-    dumpSingleJson: true,
-    skipDownload: true,
-    noWarnings: true,
-    noPlaylist: true,
-    flatPlaylist: false,
-  });
+async function searchYouTube(
+  query,
+  limit = 20
+) {
+  const safeLimit = Math.min(
+    Number(limit || 20),
+    20
+  );
+
+  const result = await ytdlp(
+    `ytsearch${safeLimit}:${query}`,
+    {
+      dumpSingleJson: true,
+
+      skipDownload: true,
+
+      noWarnings: true,
+
+      noPlaylist: true,
+
+      flatPlaylist: false,
+    }
+  );
 
   const tracks = (result?.entries || [])
     .map(normalizeYouTubeItem)
@@ -200,12 +271,29 @@ async function searchYouTube(query, limit = 20) {
   return dedupeTracks(tracks);
 }
 
+/**
+ * ROOT
+ */
+
 app.get("/", (req, res) => {
   res.json({
     status: "Hidden Tunes backend running",
-    playback: "YouTube WebView discovery",
-    hiddenTunesCatalog: "YouTube RSS feed, no yt-dlp",
-    nativeAudio: "R2/Audius/Archive only",
+
+    playback:
+      "YouTube WebView discovery",
+
+    hiddenTunesCatalog:
+      "YouTube RSS feed",
+
+    hiddenTunesChannelId:
+      HIDDEN_TUNES_CHANNEL_ID,
+
+    hiddenTunesChannelUrl:
+      HIDDEN_TUNES_CHANNEL_URL,
+
+    nativeAudio:
+      "R2/Audius/Archive only",
+
     routes: [
       "/api/youtube/search?q=burna",
       "/api/youtube/trending",
@@ -216,119 +304,227 @@ app.get("/", (req, res) => {
   });
 });
 
+/**
+ * HEALTH
+ */
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
+
     status: "connected",
+
     service: "Hidden Tunes backend",
   });
 });
 
-app.get("/api/youtube/search", async (req, res) => {
-  try {
-    const query = String(req.query.q || "").trim();
-    const limit = Math.min(Number(req.query.limit || 20), 20);
+/**
+ * SEARCH ROUTE
+ */
 
-    if (!query) {
-      return res.status(400).json({
-        error: "Missing search query",
+app.get(
+  "/api/youtube/search",
+  async (req, res) => {
+    try {
+      const query = String(
+        req.query.q || ""
+      ).trim();
+
+      const limit = Math.min(
+        Number(req.query.limit || 20),
+        20
+      );
+
+      if (!query) {
+        return res.status(400).json({
+          error: "Missing search query",
+        });
+      }
+
+      const tracks =
+        await searchYouTube(
+          query,
+          limit
+        );
+
+      res.json({
+        query,
+        tracks,
+      });
+    } catch (error) {
+      console.error(
+        "YouTube search error:",
+        error
+      );
+
+      res.status(500).json({
+        error: "YouTube search failed",
+
+        details: error.message,
       });
     }
-
-    const tracks = await searchYouTube(query, limit);
-
-    res.json({
-      query,
-      tracks,
-    });
-  } catch (error) {
-    console.error("YouTube search error:", error);
-
-    res.status(500).json({
-      error: "YouTube search failed",
-      details: error.message,
-    });
   }
-});
+);
 
-app.get("/api/youtube/trending", async (req, res) => {
-  try {
-    const limit = Math.min(Number(req.query.limit || 20), 20);
+/**
+ * TRENDING
+ */
 
-    const query = String(
-      req.query.q ||
-        "trending afrobeat music amapiano afrobeats dancehall"
-    ).trim();
+app.get(
+  "/api/youtube/trending",
+  async (req, res) => {
+    try {
+      const limit = Math.min(
+        Number(req.query.limit || 20),
+        20
+      );
 
-    const tracks = await searchYouTube(query, limit);
+      const query = String(
+        req.query.q ||
+          "trending afrobeat music amapiano afrobeats dancehall"
+      ).trim();
 
-    res.json({
-      title: "Trending YouTube",
-      query,
-      tracks,
-    });
-  } catch (error) {
-    console.error("YouTube trending error:", error);
+      const tracks =
+        await searchYouTube(
+          query,
+          limit
+        );
 
-    res.status(500).json({
-      error: "YouTube trending failed",
-      details: error.message,
-    });
+      res.json({
+        title: "Trending YouTube",
+
+        query,
+
+        tracks,
+      });
+    } catch (error) {
+      console.error(
+        "YouTube trending error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "YouTube trending failed",
+
+        details: error.message,
+      });
+    }
   }
-});
+);
 
-app.get("/api/youtube/hidden-tunes", async (req, res) => {
-  try {
-    const limit = Math.min(Number(req.query.limit || 20), 20);
-    const catalog = await fetchHiddenTunesRss(limit);
+/**
+ * HIDDEN TUNES CATALOG
+ */
 
-    res.json({
-      title: "Hidden Tunes Catalog",
-      source: catalog.source,
-      mode: catalog.mode,
-      tracks: catalog.tracks,
-    });
-  } catch (error) {
-    console.error("Hidden Tunes catalog error:", error);
+app.get(
+  "/api/youtube/hidden-tunes",
+  async (req, res) => {
+    try {
+      const limit = Math.min(
+        Number(req.query.limit || 20),
+        20
+      );
 
-    res.status(500).json({
-      error: "Hidden Tunes catalog failed",
-      details: error.message,
-      tracks: [],
-    });
+      const catalog =
+        await fetchHiddenTunesRss(
+          limit
+        );
+
+      res.json({
+        title: "Hidden Tunes Catalog",
+
+        source: catalog.source,
+
+        channelId:
+          catalog.channelId,
+
+        channelUrl:
+          catalog.channelUrl,
+
+        mode: catalog.mode,
+
+        tracks: catalog.tracks,
+      });
+    } catch (error) {
+      console.error(
+        "Hidden Tunes catalog error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Hidden Tunes catalog failed",
+
+        details: error.message,
+
+        tracks: [],
+      });
+    }
   }
-});
+);
+
+/**
+ * AUDIO
+ */
 
 async function getM4aUrl(videoId) {
-  const safeVideoId = extractYouTubeId(videoId);
+  const safeVideoId =
+    extractYouTubeId(videoId);
 
   if (!safeVideoId) {
-    throw new Error("Missing or invalid YouTube video ID");
+    throw new Error(
+      "Missing or invalid YouTube video ID"
+    );
   }
 
   if (streamCache.has(safeVideoId)) {
-    console.log("CACHE HIT M4A:", safeVideoId);
-    return streamCache.get(safeVideoId);
+    console.log(
+      "CACHE HIT M4A:",
+      safeVideoId
+    );
+
+    return streamCache.get(
+      safeVideoId
+    );
   }
 
-  console.log("CACHE MISS M4A:", safeVideoId);
+  console.log(
+    "CACHE MISS M4A:",
+    safeVideoId
+  );
 
   const videoUrl = `https://www.youtube.com/watch?v=${safeVideoId}`;
 
   const rawUrl = await ytdlp(videoUrl, {
     getUrl: true,
+
     noWarnings: true,
+
     noPlaylist: true,
-    format: "140/bestaudio[ext=m4a]/bestaudio",
+
+    format:
+      "140/bestaudio[ext=m4a]/bestaudio",
   });
 
-  const streamUrl = String(rawUrl || "").split("\n")[0].trim();
+  const streamUrl = String(
+    rawUrl || ""
+  )
+    .split("\n")[0]
+    .trim();
 
   if (!streamUrl) {
-    throw new Error("No stream URL returned");
+    throw new Error(
+      "No stream URL returned"
+    );
   }
 
-  const lower = streamUrl.toLowerCase();
+  const lower =
+    streamUrl.toLowerCase();
+
+  /**
+   * Reject WEBM
+   */
 
   if (
     lower.includes("itag=251") ||
@@ -337,58 +533,122 @@ async function getM4aUrl(videoId) {
     lower.includes("audio/webm") ||
     lower.includes("audio%2fwebm")
   ) {
-    throw new Error("Rejected WEBM. iOS requires m4a/audio mp4.");
+    throw new Error(
+      "Rejected WEBM. iOS requires m4a/audio mp4."
+    );
   }
 
-  console.log("M4A READY:", safeVideoId);
+  console.log(
+    "M4A READY:",
+    safeVideoId
+  );
 
-  streamCache.set(safeVideoId, streamUrl);
+  streamCache.set(
+    safeVideoId,
+    streamUrl
+  );
 
   return streamUrl;
 }
 
-app.get("/api/youtube/audio/:videoId", async (req, res) => {
-  try {
-    const safeVideoId = extractYouTubeId(req.params.videoId);
-    const streamUrl = await getM4aUrl(safeVideoId);
+/**
+ * AUDIO ROUTE
+ */
 
-    res.json({
-      videoId: safeVideoId,
-      streamUrl,
-      cached: streamCache.has(safeVideoId),
-      format: "m4a",
-    });
-  } catch (error) {
-    console.error("YouTube audio error:", error);
+app.get(
+  "/api/youtube/audio/:videoId",
+  async (req, res) => {
+    try {
+      const safeVideoId =
+        extractYouTubeId(
+          req.params.videoId
+        );
 
-    res.status(500).json({
-      error: "Failed to get YouTube m4a audio",
-      details: error.message,
-    });
+      const streamUrl =
+        await getM4aUrl(
+          safeVideoId
+        );
+
+      res.json({
+        videoId: safeVideoId,
+
+        streamUrl,
+
+        cached:
+          streamCache.has(
+            safeVideoId
+          ),
+
+        format: "m4a",
+      });
+    } catch (error) {
+      console.error(
+        "YouTube audio error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to get YouTube m4a audio",
+
+        details: error.message,
+      });
+    }
   }
-});
+);
 
-app.get("/api/youtube/stream/:videoId", async (req, res) => {
-  try {
-    const safeVideoId = extractYouTubeId(req.params.videoId);
-    const streamUrl = await getM4aUrl(safeVideoId);
+/**
+ * STREAM ROUTE
+ */
 
-    res.json({
-      videoId: safeVideoId,
-      streamUrl,
-      cached: streamCache.has(safeVideoId),
-      format: "m4a",
-    });
-  } catch (error) {
-    console.error("YouTube stream error:", error);
+app.get(
+  "/api/youtube/stream/:videoId",
+  async (req, res) => {
+    try {
+      const safeVideoId =
+        extractYouTubeId(
+          req.params.videoId
+        );
 
-    res.status(500).json({
-      error: "Failed to get YouTube m4a stream",
-      details: error.message,
-    });
+      const streamUrl =
+        await getM4aUrl(
+          safeVideoId
+        );
+
+      res.json({
+        videoId: safeVideoId,
+
+        streamUrl,
+
+        cached:
+          streamCache.has(
+            safeVideoId
+          ),
+
+        format: "m4a",
+      });
+    } catch (error) {
+      console.error(
+        "YouTube stream error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to get YouTube m4a stream",
+
+        details: error.message,
+      });
+    }
   }
-});
+);
+
+/**
+ * START
+ */
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Hidden Tunes backend running on port ${PORT}`);
+  console.log(
+    `Hidden Tunes backend running on port ${PORT}`
+  );
 });
