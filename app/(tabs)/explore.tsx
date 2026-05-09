@@ -1,30 +1,39 @@
+import { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  Image,
   ActivityIndicator,
+  FlatList,
+  Image,
   ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
-import { useEffect, useState } from "react";
-
 import { LinearGradient } from "expo-linear-gradient";
-
 import { Ionicons } from "@expo/vector-icons";
-
 import { router } from "expo-router";
 
 import { COLORS, GRADIENTS } from "../../constants/theme";
+import { HIDDEN_TUNES_GENRES } from "../../utils/genres";
 
 import {
   getTrendingYouTubeBackend,
-  BackendYouTubeTrack,
+  type BackendYouTubeTrack,
 } from "../../services/youtubeBackend";
 
 const MOODS = ["Afrobeats", "Amapiano", "Afro Soul", "Dancehall"];
+
+type GenreItem = {
+  id: string;
+  title: string;
+  query: string;
+  emoji?: string;
+};
+
+function getSafeVideoId(track: BackendYouTubeTrack) {
+  return String(track.videoId || track.id || "").replace("youtube-", "").trim();
+}
 
 export default function ExploreScreen() {
   const [tracks, setTracks] = useState<BackendYouTubeTrack[]>([]);
@@ -37,25 +46,58 @@ export default function ExploreScreen() {
   async function loadTrending() {
     try {
       setLoading(true);
+
       const results = await getTrendingYouTubeBackend();
-      setTracks(results);
+      setTracks(Array.isArray(results) ? results : []);
     } catch (error) {
       console.log("Trending load error:", error);
+      setTracks([]);
     } finally {
       setLoading(false);
     }
   }
 
+  function openGenre(genre: GenreItem) {
+    router.push({
+      pathname: "/genre",
+      params: {
+        id: genre.id,
+        title: genre.title,
+        query: genre.query,
+      },
+    } as any);
+  }
+
+  function openMood(mood: string) {
+    router.push({
+      pathname: "/genre",
+      params: {
+        id: mood.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        title: mood,
+        query: `${mood} music`,
+      },
+    } as any);
+  }
+
   function openTrack(track: BackendYouTubeTrack) {
+    const videoId = getSafeVideoId(track);
+
+    if (!videoId) {
+      console.log("Missing YouTube videoId:", track);
+      return;
+    }
+
     router.push({
       pathname: "/youtube-player",
       params: {
-        id: track.id,
+        id: videoId,
+        videoId,
         title: track.title,
         artist: track.artist,
+        channelTitle: track.channelTitle,
         thumbnail: track.thumbnail,
       },
-    });
+    } as any);
   }
 
   const featured = tracks[0];
@@ -65,7 +107,7 @@ export default function ExploreScreen() {
     <LinearGradient colors={GRADIENTS.main} style={styles.container}>
       <FlatList
         data={listTracks}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.videoId || item.id}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={
@@ -76,7 +118,11 @@ export default function ExploreScreen() {
                 <Text style={styles.heading}>Trending Sounds</Text>
               </View>
 
-              <TouchableOpacity style={styles.refreshButton} onPress={loadTrending}>
+              <TouchableOpacity
+                style={styles.refreshButton}
+                onPress={loadTrending}
+                activeOpacity={0.85}
+              >
                 <Ionicons name="refresh" size={22} color={COLORS.text} />
               </TouchableOpacity>
             </View>
@@ -87,16 +133,47 @@ export default function ExploreScreen() {
               contentContainerStyle={styles.chips}
             >
               {MOODS.map((mood) => (
-                <TouchableOpacity key={mood} style={styles.chip}>
+                <TouchableOpacity
+                  key={mood}
+                  style={styles.chip}
+                  activeOpacity={0.85}
+                  onPress={() => openMood(mood)}
+                >
                   <Text style={styles.chipText}>{mood}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
 
+            <View style={styles.genreHeader}>
+              <Text style={styles.sectionTitle}>Browse genres</Text>
+              <Text style={styles.sectionSub}>
+                Albums, singles and deep discovery
+              </Text>
+            </View>
+
+            <View style={styles.genreGrid}>
+              {HIDDEN_TUNES_GENRES.map((genre) => (
+                <TouchableOpacity
+                  key={genre.id}
+                  activeOpacity={0.86}
+                  style={styles.genreCard}
+                  onPress={() => openGenre(genre as GenreItem)}
+                >
+                  <Text style={styles.genreEmoji}>{genre.emoji}</Text>
+
+                  <Text numberOfLines={1} style={styles.genreTitle}>
+                    {genre.title}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             {loading ? (
               <View style={styles.loader}>
                 <ActivityIndicator size="large" color={COLORS.primary} />
-                <Text style={styles.loadingText}>Loading trending music...</Text>
+                <Text style={styles.loadingText}>
+                  Loading trending music...
+                </Text>
               </View>
             ) : featured ? (
               <TouchableOpacity
@@ -104,7 +181,10 @@ export default function ExploreScreen() {
                 onPress={() => openTrack(featured)}
                 style={styles.heroWrap}
               >
-                <Image source={{ uri: featured.thumbnail }} style={styles.heroImage} />
+                <Image
+                  source={{ uri: featured.thumbnail || featured.artwork }}
+                  style={styles.heroImage}
+                />
 
                 <LinearGradient
                   colors={["transparent", "rgba(0,0,0,0.92)"]}
@@ -127,7 +207,7 @@ export default function ExploreScreen() {
 
                   <View style={styles.heroAction}>
                     <Ionicons name="play" size={18} color="#000" />
-                    <Text style={styles.heroActionText}>Play now</Text>
+                    <Text style={styles.heroActionText}>Open video</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -139,14 +219,18 @@ export default function ExploreScreen() {
                   color={COLORS.textMuted}
                 />
                 <Text style={styles.emptyTitle}>No Trending Songs</Text>
-                <Text style={styles.emptyText}>Restart backend, then tap refresh.</Text>
+                <Text style={styles.emptyText}>
+                  Restart backend, then tap refresh.
+                </Text>
               </View>
             )}
 
             {!loading && tracks.length > 0 && (
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Hot right now</Text>
-                <Text style={styles.sectionSub}>Backend-powered YouTube picks</Text>
+                <Text style={styles.sectionSub}>
+                  WebView-only YouTube discovery
+                </Text>
               </View>
             )}
           </>
@@ -157,9 +241,14 @@ export default function ExploreScreen() {
             style={styles.trackCard}
             onPress={() => openTrack(item)}
           >
-            <Text style={styles.rank}>{String(index + 2).padStart(2, "0")}</Text>
+            <Text style={styles.rank}>
+              {String(index + 2).padStart(2, "0")}
+            </Text>
 
-            <Image source={{ uri: item.thumbnail }} style={styles.cover} />
+            <Image
+              source={{ uri: item.thumbnail || item.artwork }}
+              style={styles.cover}
+            />
 
             <View style={styles.info}>
               <Text style={styles.trackTitle} numberOfLines={1}>
@@ -172,7 +261,7 @@ export default function ExploreScreen() {
 
               <View style={styles.metaRow}>
                 <Ionicons name="logo-youtube" size={13} color="#ff3b30" />
-                <Text style={styles.metaText}>YouTube Audio</Text>
+                <Text style={styles.metaText}>YouTube WebView</Text>
               </View>
             </View>
 
@@ -190,33 +279,28 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-
   listContent: {
     paddingTop: 68,
     paddingHorizontal: 20,
     paddingBottom: 165,
   },
-
   topBar: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-
   kicker: {
     color: COLORS.primary,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 2,
   },
-
   heading: {
     color: COLORS.text,
     fontSize: 34,
     fontWeight: "900",
     marginTop: 4,
   },
-
   refreshButton: {
     width: 46,
     height: 46,
@@ -227,13 +311,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-
   chips: {
     gap: 10,
     paddingTop: 22,
     paddingBottom: 22,
   },
-
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -242,25 +324,50 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
   },
-
   chipText: {
     color: COLORS.text,
     fontSize: 13,
     fontWeight: "700",
   },
-
+  genreHeader: {
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  genreGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 28,
+  },
+  genreCard: {
+    width: "47%",
+    minHeight: 92,
+    borderRadius: 24,
+    padding: 16,
+    backgroundColor: "rgba(255,255,255,0.065)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    justifyContent: "space-between",
+  },
+  genreEmoji: {
+    fontSize: 26,
+  },
+  genreTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: "900",
+    marginTop: 12,
+  },
   loader: {
     height: 360,
     justifyContent: "center",
     alignItems: "center",
   },
-
   loadingText: {
     color: COLORS.textMuted,
     marginTop: 14,
     fontSize: 14,
   },
-
   heroWrap: {
     height: 360,
     borderRadius: 34,
@@ -270,17 +377,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.12)",
     marginBottom: 30,
   },
-
   heroImage: {
     width: "100%",
     height: "100%",
     position: "absolute",
   },
-
   heroOverlay: {
     ...StyleSheet.absoluteFillObject,
   },
-
   heroBadge: {
     position: "absolute",
     top: 18,
@@ -294,34 +398,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
   },
-
   heroBadgeText: {
     color: COLORS.text,
     fontSize: 12,
     fontWeight: "800",
     marginLeft: 6,
   },
-
   heroContent: {
     position: "absolute",
     left: 22,
     right: 22,
     bottom: 22,
   },
-
   heroTitle: {
     color: COLORS.text,
     fontSize: 26,
     fontWeight: "900",
     lineHeight: 31,
   },
-
   heroArtist: {
     color: COLORS.textMuted,
     fontSize: 15,
     marginTop: 8,
   },
-
   heroAction: {
     marginTop: 18,
     alignSelf: "flex-start",
@@ -332,29 +431,24 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 999,
   },
-
   heroActionText: {
     color: "#000",
     fontWeight: "900",
     marginLeft: 8,
   },
-
   sectionHeader: {
     marginBottom: 16,
   },
-
   sectionTitle: {
     color: COLORS.text,
     fontSize: 22,
     fontWeight: "900",
   },
-
   sectionSub: {
     color: COLORS.textMuted,
     fontSize: 13,
     marginTop: 5,
   },
-
   trackCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -365,51 +459,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.09)",
   },
-
   rank: {
     width: 30,
     color: "rgba(255,255,255,0.32)",
     fontSize: 15,
     fontWeight: "900",
   },
-
   cover: {
     width: 70,
     height: 70,
     borderRadius: 18,
     backgroundColor: COLORS.card,
   },
-
   info: {
     flex: 1,
     marginLeft: 14,
   },
-
   trackTitle: {
     color: COLORS.text,
     fontSize: 15,
     fontWeight: "800",
   },
-
   artist: {
     color: COLORS.textMuted,
     fontSize: 13,
     marginTop: 5,
   },
-
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
     marginTop: 8,
   },
-
   metaText: {
     color: COLORS.textMuted,
     fontSize: 11,
     fontWeight: "700",
     marginLeft: 5,
   },
-
   playCircle: {
     width: 38,
     height: 38,
@@ -418,20 +504,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   empty: {
     height: 340,
     alignItems: "center",
     justifyContent: "center",
   },
-
   emptyTitle: {
     color: COLORS.text,
     fontSize: 21,
     fontWeight: "900",
     marginTop: 18,
   },
-
   emptyText: {
     color: COLORS.textMuted,
     marginTop: 8,

@@ -10,6 +10,7 @@ import {
 
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 
 import { COLORS, GRADIENTS } from "../../constants/theme";
 import {
@@ -72,9 +73,7 @@ export default function ProfileScreen() {
             style={[
               styles.statusDot,
               {
-                backgroundColor: backendStatus.online
-                  ? "#22c55e"
-                  : "#ef4444",
+                backgroundColor: backendStatus.online ? "#22c55e" : "#ef4444",
               },
             ]}
           />
@@ -115,27 +114,56 @@ export default function ProfileScreen() {
           <Text style={styles.sectionTitle}>Your Library</Text>
 
           <ProfileItem
+            icon="albums"
+            title="Playlists"
+            subtitle="Create and manage your playlists"
+            onPress={() => router.push("/playlists" as any)}
+          />
+
+          <ProfileItem
             icon="heart"
             title="Favorites"
             subtitle="Saved songs"
+            onPress={() => router.push("/favorites" as any)}
           />
 
           <ProfileItem
             icon="download"
             title="Downloads"
             subtitle="Offline music"
+            onPress={() => router.push("/downloads" as any)}
           />
 
           <ProfileItem
             icon="time"
             title="Recently Played"
             subtitle="Listening history"
+            onPress={() => router.push("/recently-played" as any)}
           />
 
           <ProfileItem
             icon="list"
             title="Queue"
             subtitle="Up next"
+            onPress={() => router.push("/queue" as any)}
+          />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Discovery</Text>
+
+          <ProfileItem
+            icon="radio"
+            title="Personal Radio"
+            subtitle="Endless smart music discovery"
+            onPress={() => router.push("/radio" as any)}
+          />
+
+          <ProfileItem
+            icon="sparkles"
+            title="Recommended For You"
+            subtitle="Smart discovery engine"
+            onPress={() => {}}
           />
         </View>
 
@@ -146,12 +174,14 @@ export default function ProfileScreen() {
             icon="shield-checkmark"
             title="Privacy Policy"
             subtitle="Store-ready legal page"
+            onPress={() => {}}
           />
 
           <ProfileItem
             icon="notifications"
             title="Notifications"
             subtitle="New music alerts"
+            onPress={() => {}}
           />
 
           <ProfileItem
@@ -162,6 +192,7 @@ export default function ProfileScreen() {
                 ? "Streaming server online"
                 : "Streaming server offline"
             }
+            onPress={checkBackend}
           />
         </View>
       </ScrollView>
@@ -173,13 +204,15 @@ function ProfileItem({
   icon,
   title,
   subtitle,
+  onPress,
 }: {
   icon: any;
   title: string;
   subtitle: string;
+  onPress?: () => void;
 }) {
   return (
-    <TouchableOpacity activeOpacity={0.84} style={styles.item}>
+    <TouchableOpacity activeOpacity={0.84} style={styles.item} onPress={onPress}>
       <View style={styles.itemIcon}>
         <Ionicons name={icon} size={21} color={COLORS.primary} />
       </View>
@@ -189,11 +222,7 @@ function ProfileItem({
         <Text style={styles.itemSubtitle}>{subtitle}</Text>
       </View>
 
-      <Ionicons
-        name="chevron-forward"
-        size={20}
-        color={COLORS.textMuted}
-      />
+      <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
     </TouchableOpacity>
   );
 }

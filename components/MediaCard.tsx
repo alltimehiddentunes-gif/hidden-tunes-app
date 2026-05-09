@@ -1,0 +1,222 @@
+import {
+  Image,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+
+import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
+
+import { COLORS, GRADIENTS } from "../constants/theme";
+
+type MediaCardProps = {
+  title: string;
+  subtitle?: string;
+  image?: any;
+  type?: "song" | "playlist" | "album" | "artist" | "radio";
+  size?: "small" | "medium" | "large";
+  showPlayButton?: boolean;
+  onPress?: () => void;
+  onPlayPress?: () => void;
+};
+
+export default function MediaCard({
+  title,
+  subtitle,
+  image,
+  type = "song",
+  size = "medium",
+  showPlayButton = true,
+  onPress,
+  onPlayPress,
+}: MediaCardProps) {
+  const artworkSize = size === "large" ? 150 : size === "small" ? 58 : 82;
+
+  const iconName =
+    type === "playlist"
+      ? "library"
+      : type === "album"
+      ? "albums"
+      : type === "artist"
+      ? "person"
+      : type === "radio"
+      ? "radio"
+      : "musical-note";
+
+  const renderArtwork = () => {
+    if (!image) {
+      return (
+        <LinearGradient
+          colors={GRADIENTS.soft}
+          style={[
+            styles.emptyArtwork,
+            {
+              width: artworkSize,
+              height: artworkSize,
+              borderRadius: artworkSize * 0.24,
+            },
+          ]}
+        >
+          <Ionicons
+            name={iconName as any}
+            size={artworkSize * 0.42}
+            color={COLORS.primary}
+          />
+        </LinearGradient>
+      );
+    }
+
+    return (
+      <Image
+        source={typeof image === "string" ? { uri: image } : image}
+        style={[
+          styles.artwork,
+          {
+            width: artworkSize,
+            height: artworkSize,
+            borderRadius: artworkSize * 0.24,
+          },
+        ]}
+      />
+    );
+  };
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.88}
+      onPress={onPress}
+      style={[styles.wrapper, size === "large" && styles.largeWrapper]}
+    >
+      <LinearGradient
+        colors={GRADIENTS.card}
+        style={[styles.card, size === "large" && styles.largeCard]}
+      >
+        {renderArtwork()}
+
+        <View style={[styles.info, size === "large" && styles.largeInfo]}>
+          <Text
+            numberOfLines={size === "large" ? 2 : 1}
+            style={[styles.title, size === "large" && styles.largeTitle]}
+          >
+            {title}
+          </Text>
+
+          {!!subtitle && (
+            <Text numberOfLines={1} style={styles.subtitle}>
+              {subtitle}
+            </Text>
+          )}
+        </View>
+
+        {showPlayButton && (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={onPlayPress || onPress}
+            style={styles.playButton}
+          >
+            <Ionicons name="play" size={18} color="#050505" />
+          </TouchableOpacity>
+        )}
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrapper: {
+    marginBottom: 14,
+  },
+
+  largeWrapper: {
+    width: 180,
+    marginRight: 16,
+    marginBottom: 0,
+  },
+
+  card: {
+    minHeight: 96,
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 28,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
+    shadowColor: "#A855F7",
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    elevation: 3,
+  },
+
+  largeCard: {
+    width: 180,
+    minHeight: 238,
+    alignItems: "flex-start",
+    flexDirection: "column",
+    padding: 14,
+  },
+
+  artwork: {
+    backgroundColor: "#111",
+  },
+
+  emptyArtwork: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  info: {
+    flex: 1,
+    marginLeft: 14,
+    paddingRight: 6,
+  },
+
+  largeInfo: {
+    marginLeft: 0,
+    marginTop: 12,
+    width: "100%",
+    paddingRight: 0,
+  },
+
+  title: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: COLORS.text,
+    letterSpacing: -0.2,
+  },
+
+  largeTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+  },
+
+  subtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: COLORS.textMuted,
+    fontWeight: "700",
+  },
+
+  playButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.primary,
+    marginLeft: 10,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    elevation: 4,
+  },
+});

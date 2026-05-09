@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
   Image,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -21,13 +21,24 @@ type YouTubeMini = {
   title: string;
   channelTitle?: string;
   artist?: string;
+  thumbnail?: string;
 };
 
 const YOUTUBE_MINI_KEY = "hidden_tunes_current_youtube";
 
 export default function MiniPlayer() {
-  const { currentSong, isPlaying, togglePlayPause, position, duration } =
-    usePlayer();
+  const {
+    currentSong,
+    isPlaying,
+    isLoading,
+    togglePlayPause,
+    nextSong,
+    position,
+    duration,
+    radioMode,
+    youtubeQueue,
+    radioQueue,
+  } = usePlayer() as any;
 
   const [youtubeVideo, setYoutubeVideo] = useState<YouTubeMini | null>(null);
 
@@ -48,49 +59,76 @@ export default function MiniPlayer() {
     return () => clearInterval(timer);
   }, []);
 
-  if (!currentSong && !youtubeVideo) return null;
-
-  const progress = duration > 0 ? Math.min(position / duration, 1) : 0;
-
   const isYoutubeMode = !currentSong && !!youtubeVideo;
 
-  return (
-    <TouchableOpacity
-      activeOpacity={0.92}
-      style={styles.wrapper}
-      onPress={() => {
-        if (isYoutubeMode && youtubeVideo?.id) {
-          router.push({
-            pathname: "/youtube-player",
-            params: {
-              videoId: youtubeVideo.id,
-              title: youtubeVideo.title,
-              channelTitle:
-                youtubeVideo.channelTitle || youtubeVideo.artist || "YouTube",
-            },
-          });
-          return;
-        }
+  const progress = useMemo(() => {
+    if (!duration || duration <= 0) return 0;
+    return Math.min(position / duration, 1);
+  }, [position, duration]);
 
-        router.push("/player");
-      }}
-    >
+  const queueLabel = useMemo(() => {
+    if (radioMode && radioQueue?.length) return "Radio queue";
+    if (youtubeQueue?.length) return `${youtubeQueue.length} in queue`;
+    if (isYoutubeMode) return "YouTube";
+    return "Now playing";
+  }, [radioMode, radioQueue, youtubeQueue, isYoutubeMode]);
+
+  if (!currentSong && !youtubeVideo) return null;
+
+  const title = isYoutubeMode ? youtubeVideo?.title : currentSong?.title;
+
+  const artist = isYoutubeMode
+    ? youtubeVideo?.channelTitle || youtubeVideo?.artist || "YouTube"
+    : currentSong?.artist || currentSong?.user?.name || "Unknown Artist";
+
+  const cover = isYoutubeMode
+    ? youtubeVideo?.thumbnail
+    : currentSong?.cover || currentSong?.thumbnail || currentSong?.artwork;
+
+  const openPlayer = () => {
+    if (isYoutubeMode && youtubeVideo?.id) {
+      router.push({
+        pathname: "/youtube-player",
+        params: {
+          videoId: youtubeVideo.id,
+          title: youtubeVideo.title,
+          channelTitle: youtubeVideo.channelTitle || youtubeVideo.artist || "YouTube",
+          thumbnail: youtubeVideo.thumbnail || "",
+        },
+      });
+      return;
+    }
+
+    router.push("/player");
+  };
+
+  const handleMainButton = async () => {
+    if (isYoutubeMode) {
+      openPlayer();
+      return;
+    }
+
+    await togglePlayPause();
+  };
+
+  return (
+    <TouchableOpacity activeOpacity={0.92} style={styles.wrapper} onPress={openPlayer}>
       <LinearGradient colors={GRADIENTS.neon} style={styles.border}>
-        <BlurView intensity={85} tint="dark" style={styles.container}>
+        <BlurView intensity={88} tint="dark" style={styles.container}>
           <View style={styles.coverWrap}>
-            {isYoutubeMode ? (
+            {cover ? (
+              <Image
+                source={typeof cover === "string" ? { uri: cover } : cover}
+                style={styles.cover}
+              />
+            ) : isYoutubeMode ? (
               <View style={styles.youtubeCover}>
                 <Ionicons name="logo-youtube" size={30} color="#fff" />
               </View>
             ) : (
-              <Image
-                source={
-                  typeof currentSong?.cover === "string"
-                    ? { uri: currentSong.cover }
-                    : currentSong?.cover
-                }
-                style={styles.cover}
-              />
+              <LinearGradient colors={GRADIENTS.soft} style={styles.youtubeCover}>
+                <Ionicons name="musical-notes" size={26} color={COLORS.primary} />
+              </LinearGradient>
             )}
 
             {(isPlaying || isYoutubeMode) && <View style={styles.liveDot} />}
@@ -98,68 +136,66 @@ export default function MiniPlayer() {
 
           <View style={styles.info}>
             <View style={styles.badgeRow}>
-              {isYoutubeMode && (
-                <View style={styles.youtubeBadge}>
-                  <Ionicons name="logo-youtube" size={12} color="#fff" />
-                  <Text style={styles.youtubeBadgeText}>YouTube</Text>
-                </View>
-              )}
+              <View style={[styles.badge, isYoutubeMode && styles.youtubeBadge]}>
+                <Ionicons
+                  name={isYoutubeMode ? "logo-youtube" : radioMode ? "radio" : "pulse"}
+                  size={11}
+                  color="#fff"
+                />
+                <Text style={styles.badgeText}>{queueLabel}</Text>
+              </View>
             </View>
 
             <Text numberOfLines={1} style={styles.title}>
-              {isYoutubeMode ? youtubeVideo?.title : currentSong?.title}
+              {title}
             </Text>
 
             <Text numberOfLines={1} style={styles.artist}>
-              {isYoutubeMode
-                ? youtubeVideo?.channelTitle || youtubeVideo?.artist || "YouTube"
-                : currentSong?.artist || currentSong?.user?.name || "Unknown Artist"}
+              {artist}
             </Text>
 
-            {!isYoutubeMode && (
+            {!isYoutubeMode ? (
               <View style={styles.progressTrack}>
-                <View
-                  style={[styles.progressFill, { width: `${progress * 100}%` }]}
-                />
+                <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
               </View>
-            )}
-
-            {isYoutubeMode && (
+            ) : (
               <Text numberOfLines={1} style={styles.youtubeNote}>
                 Tap to reopen video
               </Text>
             )}
           </View>
 
+          {!isYoutubeMode && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.nextButton}
+              onPress={(event) => {
+                event.stopPropagation();
+                nextSong();
+              }}
+            >
+              <Ionicons name="play-skip-forward" size={19} color={COLORS.text} />
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             activeOpacity={0.85}
             style={[styles.playButton, isYoutubeMode && styles.youtubeButton]}
             onPress={(event) => {
               event.stopPropagation();
-
-              if (isYoutubeMode) {
-                if (!youtubeVideo?.id) return;
-
-                router.push({
-                  pathname: "/youtube-player",
-                  params: {
-                    videoId: youtubeVideo.id,
-                    title: youtubeVideo.title,
-                    channelTitle:
-                      youtubeVideo.channelTitle ||
-                      youtubeVideo.artist ||
-                      "YouTube",
-                  },
-                });
-
-                return;
-              }
-
-              togglePlayPause();
+              handleMainButton();
             }}
           >
             <Ionicons
-              name={isYoutubeMode ? "open-outline" : isPlaying ? "pause" : "play"}
+              name={
+                isYoutubeMode
+                  ? "open-outline"
+                  : isLoading
+                  ? "sync"
+                  : isPlaying
+                  ? "pause"
+                  : "play"
+              }
               size={isYoutubeMode ? 22 : 23}
               color={isYoutubeMode ? "#fff" : "#000"}
             />
@@ -176,42 +212,42 @@ const styles = StyleSheet.create({
     left: 14,
     right: 14,
     bottom: 96,
-    borderRadius: 28,
+    borderRadius: 30,
     overflow: "hidden",
   },
 
   border: {
-    borderRadius: 28,
+    borderRadius: 30,
     padding: 1.4,
   },
 
   container: {
-    height: 82,
-    borderRadius: 27,
+    height: 86,
+    borderRadius: 29,
     overflow: "hidden",
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
-    backgroundColor: "rgba(5,5,8,0.86)",
+    backgroundColor: "rgba(5,5,8,0.88)",
   },
 
   coverWrap: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
+    width: 60,
+    height: 60,
+    borderRadius: 20,
   },
 
   cover: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
+    width: 60,
+    height: 60,
+    borderRadius: 20,
     backgroundColor: COLORS.cardLight,
   },
 
   youtubeCover: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
+    width: 60,
+    height: 60,
+    borderRadius: 20,
     backgroundColor: "#ff0033",
     alignItems: "center",
     justifyContent: "center",
@@ -232,26 +268,30 @@ const styles = StyleSheet.create({
   info: {
     flex: 1,
     marginLeft: 13,
-    paddingRight: 12,
+    paddingRight: 8,
   },
 
   badgeRow: {
-    height: 16,
+    height: 17,
     justifyContent: "center",
   },
 
-  youtubeBadge: {
+  badge: {
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,0,51,0.9)",
+    backgroundColor: "rgba(168,85,247,0.82)",
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 999,
     gap: 4,
   },
 
-  youtubeBadgeText: {
+  youtubeBadge: {
+    backgroundColor: "rgba(255,0,51,0.9)",
+  },
+
+  badgeText: {
     color: "#fff",
     fontSize: 9,
     fontWeight: "900",
@@ -261,6 +301,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 14,
     fontWeight: "900",
+    marginTop: 1,
   },
 
   artist: {
@@ -289,6 +330,16 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 99,
     backgroundColor: COLORS.primary,
+  },
+
+  nextButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.075)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
   },
 
   playButton: {

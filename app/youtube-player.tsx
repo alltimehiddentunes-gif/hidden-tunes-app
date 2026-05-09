@@ -1,11 +1,10 @@
-import { AppSong, usePlayer } from "@/context/PlayerContext";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
+  ScrollView,
   StyleSheet,
+  Text,
   TouchableOpacity,
-  Linking,
+  View,
 } from "react-native";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -14,210 +13,319 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import WebView from "react-native-webview";
 
-import { COLORS, GRADIENTS } from "@/constants/theme";
+import { COLORS, GRADIENTS } from "../constants/theme";
+import { usePlayer } from "../context/PlayerContext";
 
 type YouTubeQueueItem = {
   id: string;
+  videoId: string;
   title: string;
-  artist?: string;
-  channelTitle?: string;
-  thumbnail?: string;
-  sourceName?: "YouTube";
-  isOnline?: true;
-  type?: "youtube";
+  artist: string;
+  channelTitle: string;
+  thumbnail: string;
 };
 
+const YOUTUBE_ORIGIN = "https://hiddentunes.com";
+const YOUTUBE_MINI_KEY = "hidden_tunes_current_youtube";
+
+function sanitizeYouTubeVideoId(value: any) {
+  const text = String(value || "").replace("youtube-", "").trim();
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(text)) return text;
+
+  const match = text.match(/[a-zA-Z0-9_-]{11}/);
+  return match ? match[0] : "";
+}
+
+function normalizeQueueItem(item: any): YouTubeQueueItem | null {
+  const videoId = sanitizeYouTubeVideoId(item?.videoId || item?.id);
+
+  if (!videoId) return null;
+
+  const artist = String(item?.artist || item?.channelTitle || "YouTube");
+  const thumbnail = String(item?.thumbnail || item?.cover || item?.artwork || "");
+
+  return {
+    id: videoId,
+    videoId,
+    title: String(item?.title || "YouTube Music"),
+    artist,
+    channelTitle: String(item?.channelTitle || artist),
+    thumbnail,
+  };
+}
+
 export default function YouTubePlayerScreen() {
-  const { toggleFavorite, isFavorite } = usePlayer();
+  const params = useLocalSearchParams();
+  const webViewRef = useRef<WebView | null>(null);
 
-  const webViewRef = useRef<WebView>(null);
+  const { stopPlayback } = usePlayer() as any;
 
-  const { videoId, id, title, channelTitle, artist, thumbnail, queue } =
-    useLocalSearchParams<{
-      videoId?: string;
-      id?: string;
-      title: string;
-      channelTitle?: string;
-      artist?: string;
-      thumbnail?: string;
-      queue?: string;
-    }>();
+  const startedAtRef = useRef<number>(Date.now());
+  const autoNextLockRef = useRef(false);
 
-  const routeVideoId = String(videoId || id || "");
+  const initialVideoId = sanitizeYouTubeVideoId(params.videoId || params.id);
+  const initialTitle = String(params.title || "YouTube Music");
+  const initialArtist = String(
+    params.artist || params.channelTitle || "YouTube"
+  );
 
-  const parsedQueue = useMemo<YouTubeQueueItem[]>(() => {
+  const parsedQueue: YouTubeQueueItem[] = useMemo(() => {
     try {
-      if (!queue) return [];
+      const parsed = params.queue ? JSON.parse(String(params.queue)) : [];
 
-      const decoded = JSON.parse(String(queue));
-      if (!Array.isArray(decoded)) return [];
-
-      return decoded
-        .filter((item) => item?.id || item?.videoId)
-        .map((item) => {
-          const itemId = String(item.id || item.videoId);
-
-          return {
-            id: itemId,
-            title: String(item.title || "YouTube Music"),
-            artist: String(item.artist || item.channelTitle || "YouTube"),
-            channelTitle: String(item.channelTitle || item.artist || "YouTube"),
-            thumbnail: String(
-              item.thumbnail ||
-                item.cover ||
-                `https://img.youtube.com/vi/${itemId}/hqdefault.jpg`
-            ),
-            sourceName: "YouTube",
-            isOnline: true,
-            type: "youtube",
-          };
-        });
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+          .map((item) => normalizeQueueItem(item))
+          .filter((item): item is YouTubeQueueItem => item !== null);
+      }
     } catch (error) {
       console.log("YouTube queue parse error:", error);
-      return [];
     }
-  }, [queue]);
 
-  const startVideo: YouTubeQueueItem = {
-    id: routeVideoId,
-    title: String(title || "YouTube Music"),
-    artist: String(artist || channelTitle || "YouTube"),
-    channelTitle: String(channelTitle || artist || "YouTube"),
-    thumbnail: String(
-      thumbnail || `https://img.youtube.com/vi/${routeVideoId}/hqdefault.jpg`
-    ),
-    sourceName: "YouTube",
-    isOnline: true,
-    type: "youtube",
-  };
+    const fallbackItem = normalizeQueueItem({
+      id: initialVideoId,
+      videoId: initialVideoId,
+      title: initialTitle,
+      artist: initialArtist,
+      channelTitle: initialArtist,
+      thumbnail: String(params.thumbnail || ""),
+    });
 
-  const cleanQueue =
-    parsedQueue.length > 0 ? parsedQueue : startVideo.id ? [startVideo] : [];
+    return fallbackItem ? [fallbackItem] : [];
+  }, [
+    params.queue,
+    params.thumbnail,
+    initialVideoId,
+    initialTitle,
+    initialArtist,
+  ]);
 
-  const startIndex = Math.max(
-    cleanQueue.findIndex((item) => item.id === startVideo.id),
-    0
-  );
+  const startIndex = useMemo(() => {
+    const paramIndex = Number(params.startIndex || 0);
+
+    if (!Number.isNaN(paramIndex) && paramIndex >= 0) {
+      return Math.min(paramIndex, Math.max(parsedQueue.length - 1, 0));
+    }
+
+    const foundIndex = parsedQueue.findIndex(
+      (item) => item.videoId === initialVideoId
+    );
+
+    return foundIndex >= 0 ? foundIndex : 0;
+  }, [params.startIndex, parsedQueue, initialVideoId]);
 
   const [currentIndex, setCurrentIndex] = useState(startIndex);
-  const [reloadKey, setReloadKey] = useState(0);
+  const [playerStatus, setPlayerStatus] = useState("Loading YouTube player...");
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 
-  const currentVideo = cleanQueue[currentIndex] || startVideo;
+  const queue = parsedQueue;
+  const currentVideo = queue[currentIndex] || queue[0];
 
-  const safeVideoId = String(currentVideo.id || "");
-  const safeTitle = String(currentVideo.title || "YouTube Music");
-  const safeChannel = String(
-    currentVideo.channelTitle || currentVideo.artist || "YouTube"
-  );
-  const safeThumbnail = String(
-    currentVideo.thumbnail ||
-      `https://img.youtube.com/vi/${safeVideoId}/hqdefault.jpg`
-  );
+  const videoId = currentVideo?.videoId || initialVideoId;
+  const title = currentVideo?.title || initialTitle;
+  const artist =
+    currentVideo?.artist ||
+    currentVideo?.channelTitle ||
+    initialArtist ||
+    "YouTube";
 
-  const watchUrl = `https://www.youtube.com/watch?v=${safeVideoId}`;
-
-  const favoriteSong: AppSong = {
-    id: safeVideoId,
-    title: safeTitle,
-    artist: safeChannel,
-    user: {
-      name: safeChannel,
-    },
-    channelTitle: safeChannel,
-    thumbnail: safeThumbnail,
-    cover: safeThumbnail,
-    sourceName: "YouTube",
-    type: "youtube",
-    isOnline: true,
-  };
-
-  const favoriteActive = isFavorite(favoriteSong);
-
-  async function handleToggleFavorite() {
-    if (!safeVideoId) return;
-    await toggleFavorite(favoriteSong);
-  }
+  const thumbnail = currentVideo?.thumbnail || String(params.thumbnail || "");
 
   useEffect(() => {
-    const saveYouTubeMini = async () => {
-      if (!safeVideoId) return;
+    stopPlayback?.();
+  }, []);
 
-      try {
-        await AsyncStorage.setItem(
-          "hidden_tunes_current_youtube",
-          JSON.stringify({
-            id: safeVideoId,
-            videoId: safeVideoId,
-            title: safeTitle,
-            channelTitle: safeChannel,
-            artist: safeChannel,
-            thumbnail: safeThumbnail,
-            sourceName: "YouTube",
-            isOnline: true,
-            type: "youtube",
-          })
-        );
-      } catch (error) {
-        console.log("Save YouTube MiniPlayer error:", error);
-      }
-    };
-
+  useEffect(() => {
     saveYouTubeMini();
-  }, [safeVideoId, safeTitle, safeChannel, safeThumbnail]);
 
-  const playCurrent = () => {
-    setReloadKey((prev) => prev + 1);
-  };
+    startedAtRef.current = Date.now();
+    autoNextLockRef.current = false;
+    setIsVideoPlaying(false);
+    setPlayerStatus("Loading YouTube player...");
+  }, [videoId, title, artist, thumbnail]);
 
-  const playNext = () => {
-    if (cleanQueue.length === 0) return;
-
-    const nextIndex =
-      currentIndex + 1 < cleanQueue.length ? currentIndex + 1 : 0;
-
-    setCurrentIndex(nextIndex);
-    setReloadKey((prev) => prev + 1);
-  };
-
-  const playPrevious = () => {
-    if (cleanQueue.length === 0) return;
-
-    const previousIndex =
-      currentIndex - 1 >= 0 ? currentIndex - 1 : cleanQueue.length - 1;
-
-    setCurrentIndex(previousIndex);
-    setReloadKey((prev) => prev + 1);
-  };
-
-  const openYouTube = async () => {
-    if (!safeVideoId) return;
+  async function saveYouTubeMini() {
+    if (!videoId) return;
 
     try {
-      await Linking.openURL(watchUrl);
+      await AsyncStorage.setItem(
+        YOUTUBE_MINI_KEY,
+        JSON.stringify({
+          id: videoId,
+          videoId,
+          title,
+          channelTitle: artist,
+          artist,
+          thumbnail,
+        })
+      );
     } catch (error) {
-      console.log("Open YouTube error:", error);
+      console.log("Save YouTube mini error:", error);
     }
-  };
+  }
 
-  const playerHtml = `
+  function runPlayerCommand(command: "play" | "pause" | "mute" | "unmute") {
+    const js = `
+      try {
+        if (window.player && "${command}" === "play" && typeof window.player.playVideo === "function") {
+          window.player.playVideo();
+        }
+
+        if (window.player && "${command}" === "pause" && typeof window.player.pauseVideo === "function") {
+          window.player.pauseVideo();
+        }
+
+        if (window.player && "${command}" === "mute" && typeof window.player.mute === "function") {
+          window.player.mute();
+        }
+
+        if (window.player && "${command}" === "unmute" && typeof window.player.unMute === "function") {
+          window.player.unMute();
+        }
+      } catch (error) {
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: "command_error",
+          command: "${command}",
+          message: String(error)
+        }));
+      }
+      true;
+    `;
+
+    webViewRef.current?.injectJavaScript(js);
+  }
+
+  function playAtIndex(index: number) {
+    if (!queue.length) return;
+
+    const safeIndex = Math.max(0, Math.min(index, queue.length - 1));
+
+    startedAtRef.current = Date.now();
+    autoNextLockRef.current = false;
+    setIsVideoPlaying(false);
+    setPlayerStatus("Loading YouTube player...");
+    setCurrentIndex(safeIndex);
+  }
+
+  function playNext() {
+    if (queue.length <= 1) return;
+
+    const next = currentIndex + 1;
+    playAtIndex(next >= queue.length ? 0 : next);
+  }
+
+  function playPrevious() {
+    if (queue.length <= 1) return;
+
+    const previous = currentIndex - 1;
+    playAtIndex(previous < 0 ? queue.length - 1 : previous);
+  }
+
+  function togglePlayPause() {
+    if (isVideoPlaying) {
+      runPlayerCommand("pause");
+      setIsVideoPlaying(false);
+      setPlayerStatus("Paused");
+    } else {
+      runPlayerCommand("play");
+      setIsVideoPlaying(true);
+      setPlayerStatus("Playing");
+    }
+  }
+
+  function safeAutoNext(reason: string) {
+    const watchedMs = Date.now() - startedAtRef.current;
+    const watchedSeconds = Math.floor(watchedMs / 1000);
+
+    console.log("YouTube WebView auto-next check:", {
+      reason,
+      watchedSeconds,
+    });
+
+    if (autoNextLockRef.current) return;
+
+    if (watchedMs < 15000) {
+      console.log("Blocked early WebView auto-next:", reason);
+      setPlayerStatus("Blocked early skip.");
+      return;
+    }
+
+    autoNextLockRef.current = true;
+    setPlayerStatus("Video ended. Playing next...");
+    playNext();
+
+    setTimeout(() => {
+      autoNextLockRef.current = false;
+    }, 1500);
+  }
+
+  function handleWebViewMessage(event: any) {
+    const rawMessage = String(event.nativeEvent.data || "");
+
+    try {
+      const message = JSON.parse(rawMessage);
+
+      if (message.type === "ready") {
+        setPlayerStatus("Ready");
+        return;
+      }
+
+      if (message.type === "playing") {
+        setIsVideoPlaying(true);
+        setPlayerStatus("Playing");
+        return;
+      }
+
+      if (message.type === "paused") {
+        setIsVideoPlaying(false);
+        setPlayerStatus("Paused");
+        return;
+      }
+
+      if (message.type === "ended") {
+        setIsVideoPlaying(false);
+        safeAutoNext("youtube-ended");
+        return;
+      }
+
+      if (message.type === "error") {
+        console.log("YouTube iframe error:", message);
+        setIsVideoPlaying(false);
+        setPlayerStatus("This video cannot be embedded. Tap next.");
+        return;
+      }
+
+      if (message.type === "command_error") {
+        console.log("YouTube command error:", message);
+      }
+    } catch {
+      console.log("YouTube raw message:", rawMessage);
+    }
+  }
+
+  const embedHtml = `
     <!DOCTYPE html>
     <html>
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1.0, maximum-scale=1.0"
+        />
+
         <style>
           html, body {
             margin: 0;
             padding: 0;
+            background: #000;
             width: 100%;
             height: 100%;
-            background: #000;
             overflow: hidden;
           }
 
           #player {
-            width: 100%;
-            height: 100%;
-            background: #000;
+            width: 100vw;
+            height: 100vh;
           }
         </style>
       </head>
@@ -225,48 +333,66 @@ export default function YouTubePlayerScreen() {
       <body>
         <div id="player"></div>
 
-        <script src="https://www.youtube.com/iframe_api"></script>
-
         <script>
-          var player;
+          var tag = document.createElement("script");
+          tag.src = "https://www.youtube.com/iframe_api";
+          var firstScriptTag = document.getElementsByTagName("script")[0];
+          firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-          function sendToApp(type, data) {
+          window.player = null;
+          var hasPlayed = false;
+
+          function sendMessage(payload) {
             try {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: type,
-                data: data || null
-              }));
-            } catch (e) {}
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+              }
+            } catch (error) {}
           }
 
           function onYouTubeIframeAPIReady() {
-            player = new YT.Player("player", {
+            window.player = new YT.Player("player", {
               width: "100%",
               height: "100%",
-              videoId: "${safeVideoId}",
+              videoId: "${videoId}",
+              host: "https://www.youtube.com",
               playerVars: {
                 autoplay: 1,
                 controls: 1,
+                playsinline: 1,
                 rel: 0,
                 modestbranding: 1,
-                playsinline: 1,
-                enablejsapi: 1,
-                origin: "https://hiddentunes.com"
+                origin: "${YOUTUBE_ORIGIN}",
+                enablejsapi: 1
               },
               events: {
                 onReady: function(event) {
-                  sendToApp("READY");
-                  event.target.playVideo();
+                  sendMessage({ type: "ready" });
+                  try {
+                    event.target.playVideo();
+                  } catch (error) {}
                 },
                 onStateChange: function(event) {
-                  sendToApp("STATE_CHANGE", event.data);
+                  if (event.data === YT.PlayerState.PLAYING) {
+                    hasPlayed = true;
+                    sendMessage({ type: "playing" });
+                  }
 
-                  if (event.data === 0) {
-                    sendToApp("ENDED");
+                  if (event.data === YT.PlayerState.PAUSED) {
+                    sendMessage({ type: "paused" });
+                  }
+
+                  if (event.data === YT.PlayerState.ENDED) {
+                    if (hasPlayed) {
+                      sendMessage({ type: "ended" });
+                    }
                   }
                 },
                 onError: function(event) {
-                  sendToApp("ERROR", event.data);
+                  sendMessage({
+                    type: "error",
+                    code: event.data
+                  });
                 }
               }
             });
@@ -278,114 +404,184 @@ export default function YouTubePlayerScreen() {
 
   return (
     <LinearGradient colors={GRADIENTS.main} style={styles.container}>
-      <View style={styles.topRow}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={26} color={COLORS.text} />
+      <View style={styles.glowPurple} />
+      <View style={styles.glowCyan} />
+
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => router.back()}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="chevron-back" size={24} color={COLORS.text} />
         </TouchableOpacity>
 
+        <View style={styles.topTextBox}>
+          <Text style={styles.label}>YOUTUBE WEBVIEW</Text>
+          <Text numberOfLines={1} style={styles.topTitle}>
+            Hidden Tunes Discovery
+          </Text>
+        </View>
+
         <TouchableOpacity
-          style={styles.favoriteButton}
-          onPress={handleToggleFavorite}
+          style={styles.iconButton}
+          onPress={() => router.push("/queue" as any)}
+          activeOpacity={0.85}
         >
-          <Ionicons
-            name={favoriteActive ? "heart" : "heart-outline"}
-            size={25}
-            color={favoriteActive ? "#ff0066" : COLORS.text}
-          />
+          <Ionicons name="list" size={21} color={COLORS.text} />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.playerCard}>
-        {safeVideoId ? (
+      <View style={styles.playerFrame}>
+        {videoId ? (
           <WebView
             ref={webViewRef}
-            key={`${safeVideoId}-${reloadKey}`}
-            source={{ html: playerHtml, baseUrl: "https://hiddentunes.com" }}
-            style={styles.webview}
-            allowsFullscreenVideo
+            key={videoId}
+            originWhitelist={["*"]}
+            source={{
+              html: embedHtml,
+              baseUrl: YOUTUBE_ORIGIN,
+              headers: {
+                Referer: `${YOUTUBE_ORIGIN}/`,
+              },
+            }}
             javaScriptEnabled
             domStorageEnabled
             allowsInlineMediaPlayback
             mediaPlaybackRequiresUserAction={false}
-            originWhitelist={["*"]}
-            thirdPartyCookiesEnabled
-            sharedCookiesEnabled
-            onMessage={(event) => {
-              try {
-                const message = JSON.parse(event.nativeEvent.data);
-
-                if (message.type === "ENDED") {
-                  playNext();
-                }
-
-                if (message.type === "ERROR") {
-                  console.log("YouTube player error:", message.data);
-                }
-              } catch {
-                // Ignore invalid WebView messages safely
-              }
+            allowsFullscreenVideo
+            setSupportMultipleWindows={false}
+            mixedContentMode="always"
+            onMessage={handleWebViewMessage}
+            onError={(error) => {
+              console.log("YouTube WebView error:", error.nativeEvent);
+              setPlayerStatus("WebView error. Tap next.");
             }}
+            onHttpError={(error) => {
+              console.log("YouTube WebView HTTP error:", error.nativeEvent);
+              setPlayerStatus("YouTube HTTP error. Tap next.");
+            }}
+            style={styles.webview}
           />
         ) : (
-          <View style={styles.emptyBox}>
-            <Ionicons name="alert-circle" size={38} color={COLORS.textMuted} />
-            <Text style={styles.emptyText}>No YouTube video found.</Text>
+          <View style={styles.noVideoBox}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={42}
+              color={COLORS.textMuted}
+            />
+            <Text style={styles.noVideoText}>No valid YouTube video ID.</Text>
           </View>
         )}
       </View>
 
-      <View style={styles.infoBox}>
-        <Text numberOfLines={3} style={styles.title}>
-          {safeTitle}
+      <View style={styles.infoCard}>
+        <View style={styles.youtubePill}>
+          <Ionicons name="logo-youtube" size={14} color="#fff" />
+          <Text style={styles.youtubePillText}>WebView Playback Only</Text>
+        </View>
+
+        <Text numberOfLines={2} style={styles.title}>
+          {title}
         </Text>
 
-        <Text numberOfLines={1} style={styles.channel}>
-          {safeChannel}
+        <Text numberOfLines={1} style={styles.artist}>
+          {artist}
         </Text>
 
-        <TouchableOpacity
-          style={styles.favoriteWideButton}
-          onPress={handleToggleFavorite}
-        >
-          <Ionicons
-            name={favoriteActive ? "heart" : "heart-outline"}
-            size={21}
-            color={favoriteActive ? "#ff0066" : COLORS.text}
-          />
-          <Text style={styles.favoriteWideText}>
-            {favoriteActive ? "Added to Favorites" : "Add to Favorites"}
-          </Text>
-        </TouchableOpacity>
+        <Text style={styles.queueText}>
+          {queue.length > 1
+            ? `${currentIndex + 1} of ${queue.length} in YouTube queue`
+            : "Single YouTube play"}
+        </Text>
 
-        <View style={styles.controlsRow}>
-          <TouchableOpacity style={styles.controlButton} onPress={playPrevious}>
-            <Ionicons name="play-skip-back" size={25} color={COLORS.text} />
+        <Text style={styles.statusText}>{playerStatus}</Text>
+
+        <View style={styles.controls}>
+          <TouchableOpacity
+            style={styles.controlButton}
+            onPress={playPrevious}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="play-skip-back" size={27} color={COLORS.text} />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.playButton} onPress={playCurrent}>
-            <Ionicons name="play" size={34} color="#fff" />
+          <TouchableOpacity
+            style={styles.mainButton}
+            onPress={togglePlayPause}
+            activeOpacity={0.88}
+          >
+            <Ionicons
+              name={isVideoPlaying ? "pause" : "play"}
+              size={34}
+              color="#000"
+            />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.controlButton} onPress={playNext}>
-            <Ionicons name="play-skip-forward" size={25} color={COLORS.text} />
+          <TouchableOpacity
+            style={styles.controlButton}
+            onPress={playNext}
+            activeOpacity={0.85}
+          >
+            <Ionicons
+              name="play-skip-forward"
+              size={27}
+              color={COLORS.text}
+            />
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.queueText}>
-          {cleanQueue.length > 1
-            ? `YouTube queue: ${currentIndex + 1} / ${cleanQueue.length}`
-            : "Single YouTube video"}
-        </Text>
-
-        <TouchableOpacity style={styles.youtubeButton} onPress={openYouTube}>
-          <Ionicons name="logo-youtube" size={22} color="#fff" />
-          <Text style={styles.youtubeButtonText}>Watch on YouTube</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.note}>
-          YouTube favorites are saved in your main Hidden Tunes library.
+        <Text style={styles.notice}>
+          YouTube discovery uses embedded playback. Hosted Hidden Tunes songs use
+          the premium native player.
         </Text>
       </View>
+
+      <ScrollView style={styles.queueList} showsVerticalScrollIndicator={false}>
+        <View style={styles.queueHeader}>
+          <Text style={styles.queueHeaderTitle}>YouTube Queue</Text>
+          <Text style={styles.queueHeaderSub}>
+            Discovery playback inside Hidden Tunes
+          </Text>
+        </View>
+
+        {queue.map((item, index) => {
+          const active = index === currentIndex;
+
+          return (
+            <TouchableOpacity
+              key={`${item.videoId || item.id}-${index}`}
+              style={[styles.queueItem, active && styles.queueItemActive]}
+              onPress={() => playAtIndex(index)}
+              activeOpacity={0.86}
+            >
+              <View style={styles.queueIndex}>
+                {active ? (
+                  <Ionicons name="play" size={13} color="#000" />
+                ) : (
+                  <Text style={styles.queueIndexText}>{index + 1}</Text>
+                )}
+              </View>
+
+              <View style={styles.queueInfo}>
+                <Text numberOfLines={1} style={styles.queueTitle}>
+                  {item.title}
+                </Text>
+
+                <Text numberOfLines={1} style={styles.queueArtist}>
+                  {item.artist || item.channelTitle || "YouTube"}
+                </Text>
+              </View>
+
+              {active && (
+                <Ionicons name="pulse" size={19} color={COLORS.primary} />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+
+        <View style={{ height: 120 }} />
+      </ScrollView>
     </LinearGradient>
   );
 }
@@ -397,34 +593,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
 
-  topRow: {
+  glowPurple: {
+    position: "absolute",
+    top: 20,
+    left: -120,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: "rgba(168,85,247,0.18)",
+  },
+
+  glowCyan: {
+    position: "absolute",
+    top: 320,
+    right: -140,
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: "rgba(34,211,238,0.1)",
+  },
+
+  topBar: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 24,
+    alignItems: "center",
+    marginBottom: 18,
   },
 
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
     justifyContent: "center",
   },
 
-  favoriteButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(255,255,255,0.08)",
+  topTextBox: {
+    flex: 1,
     alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: 12,
   },
 
-  playerCard: {
-    width: "100%",
+  label: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  topTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+
+  playerFrame: {
     height: 230,
-    borderRadius: 24,
+    borderRadius: 28,
     overflow: "hidden",
     backgroundColor: "#000",
     borderWidth: 1,
@@ -436,115 +662,173 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
 
-  emptyBox: {
+  noVideoBox: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  emptyText: {
+  noVideoText: {
     color: COLORS.textMuted,
     marginTop: 10,
     fontWeight: "700",
   },
 
-  infoBox: {
-    marginTop: 22,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderRadius: 24,
+  infoCard: {
+    marginTop: 18,
     padding: 18,
+    borderRadius: 28,
+    backgroundColor: "rgba(255,255,255,0.07)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+
+  youtubePill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#ff0033",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 12,
+  },
+
+  youtubePillText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "900",
   },
 
   title: {
     color: COLORS.text,
-    fontSize: 22,
+    fontSize: 21,
     fontWeight: "900",
-    lineHeight: 29,
   },
 
-  channel: {
+  artist: {
     color: COLORS.textMuted,
     fontSize: 14,
+    fontWeight: "700",
     marginTop: 8,
   },
 
-  favoriteWideButton: {
-    marginTop: 18,
-    height: 50,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  favoriteWideText: {
-    color: COLORS.text,
-    fontSize: 14,
+  queueText: {
+    color: COLORS.primary,
+    fontSize: 12,
     fontWeight: "900",
-    marginLeft: 8,
+    marginTop: 12,
   },
 
-  controlsRow: {
-    marginTop: 22,
+  statusText: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 8,
+  },
+
+  controls: {
+    marginTop: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 18,
+    gap: 20,
   },
 
   controlButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(255,255,255,0.09)",
     alignItems: "center",
     justifyContent: "center",
   },
 
-  playButton: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: "#ff0033",
+  mainButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  queueText: {
+  notice: {
     color: COLORS.textMuted,
-    fontSize: 13,
-    fontWeight: "800",
+    fontSize: 11,
     textAlign: "center",
-    marginTop: 14,
+    lineHeight: 17,
+    marginTop: 16,
   },
 
-  youtubeButton: {
-    height: 52,
-    borderRadius: 999,
-    backgroundColor: "#ff0033",
+  queueList: {
+    marginTop: 18,
+  },
+
+  queueHeader: {
+    marginBottom: 12,
+  },
+
+  queueHeaderTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+
+  queueHeaderSub: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+
+  queueItem: {
+    padding: 14,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    marginBottom: 10,
     flexDirection: "row",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+
+  queueItemActive: {
+    backgroundColor: "rgba(168,85,247,0.16)",
+    borderColor: "rgba(168,85,247,0.4)",
+  },
+
+  queueIndex: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
     justifyContent: "center",
-    marginTop: 20,
+    marginRight: 12,
   },
 
-  youtubeButtonText: {
-    color: "#fff",
-    fontSize: 15,
+  queueIndexText: {
+    color: "#000",
+    fontSize: 12,
     fontWeight: "900",
-    marginLeft: 8,
   },
 
-  note: {
+  queueInfo: {
+    flex: 1,
+  },
+
+  queueTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+
+  queueArtist: {
     color: COLORS.textMuted,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 16,
-    textAlign: "center",
+    fontSize: 12,
+    marginTop: 5,
+    fontWeight: "700",
   },
 });

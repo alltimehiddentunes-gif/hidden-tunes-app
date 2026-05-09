@@ -9,10 +9,20 @@ import {
 
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 
 import NeonEQ from "../../components/NeonEQ";
 import { COLORS, GRADIENTS } from "../../constants/theme";
 import { usePlayer } from "../../context/PlayerContext";
+
+function sanitizeYouTubeVideoId(value: any) {
+  const text = String(value || "").replace("youtube-", "").trim();
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(text)) return text;
+
+  const match = text.match(/[a-zA-Z0-9_-]{11}/);
+  return match ? match[0] : "";
+}
 
 export default function FavoritesScreen() {
   const {
@@ -49,7 +59,30 @@ export default function FavoritesScreen() {
           contentContainerStyle={{ paddingBottom: 180 }}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => {
-            const active = currentSong?.id === item.id;
+            const isYouTube =
+              item.type === "youtube_video" ||
+              item.source === "youtube" ||
+              item.sourceName === "YouTube" ||
+              Boolean(item.videoId);
+
+            const active = currentSong?.id === item.id && !isYouTube;
+
+            const videoId = sanitizeYouTubeVideoId(item.videoId || item.id);
+
+            const artist =
+              item.artist ||
+              item.user?.name ||
+              item.channelTitle ||
+              "Unknown Artist";
+
+            const thumbnail =
+              typeof item.thumbnail === "string"
+                ? item.thumbnail
+                : typeof item.cover === "string"
+                ? item.cover
+                : typeof item.artwork === "string"
+                ? item.artwork
+                : "";
 
             const coverSource =
               typeof item.cover === "string"
@@ -58,11 +91,36 @@ export default function FavoritesScreen() {
                 ? { uri: item.thumbnail }
                 : item.cover;
 
+            function openFavorite() {
+              if (isYouTube) {
+                if (!videoId) {
+                  console.log("Missing YouTube favorite videoId:", item);
+                  return;
+                }
+
+                router.push({
+                  pathname: "/youtube-player",
+                  params: {
+                    id: videoId,
+                    videoId,
+                    title: item.title || "YouTube Music",
+                    artist,
+                    channelTitle: item.channelTitle || artist,
+                    thumbnail,
+                  },
+                } as any);
+
+                return;
+              }
+
+              playAudiusTrack(item);
+            }
+
             return (
               <TouchableOpacity
                 style={[styles.songRow, active && styles.activeRow]}
                 activeOpacity={0.85}
-                onPress={() => playAudiusTrack(item)}
+                onPress={openFavorite}
               >
                 <LinearGradient colors={GRADIENTS.neon} style={styles.coverBorder}>
                   <Image source={coverSource} style={styles.cover} />
@@ -70,14 +128,18 @@ export default function FavoritesScreen() {
 
                 <View style={styles.songInfo}>
                   <View style={styles.badgeRow}>
-                    {item.type === "youtube" || item.sourceName === "YouTube" ? (
+                    {isYouTube ? (
                       <>
                         <Ionicons name="logo-youtube" size={13} color="#ff0033" />
-                        <Text style={styles.badgeText}>YouTube</Text>
+                        <Text style={styles.badgeText}>YouTube WebView</Text>
                       </>
                     ) : (
                       <>
-                        <Ionicons name="musical-notes" size={13} color={COLORS.primary} />
+                        <Ionicons
+                          name="musical-notes"
+                          size={13}
+                          color={COLORS.primary}
+                        />
                         <Text style={styles.badgeText}>
                           {item.sourceName || "Music"}
                         </Text>
@@ -93,7 +155,7 @@ export default function FavoritesScreen() {
                   </Text>
 
                   <Text numberOfLines={1} style={styles.songArtist}>
-                    {item.artist || item.user?.name || item.channelTitle || "Unknown Artist"}
+                    {artist}
                   </Text>
                 </View>
 

@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+
 import {
   Image,
   Pressable,
@@ -23,12 +24,14 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { COLORS } from "../../constants/theme";
+import { COLORS, GRADIENTS } from "../../constants/theme";
 import { usePlayer } from "../../context/PlayerContext";
+
 import LiveWaveform from "../../components/LiveWaveform";
+import AddToPlaylistModal from "../../components/AddToPlaylistModal";
 
 function formatTime(ms: number) {
-  const totalSeconds = Math.floor(ms / 1000);
+  const totalSeconds = Math.floor((ms || 0) / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
@@ -43,19 +46,18 @@ function PremiumIconButton({ children, onPress }: any) {
   }));
 
   return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={() => {
-        scale.value = withSpring(0.9);
-      }}
-      onPressOut={() => {
-        scale.value = withSpring(1);
-      }}
-    >
-      <Animated.View style={[styles.iconButton, animatedStyle]}>
+    <Animated.View style={animatedStyle}>
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => {
+          scale.value = withSequence(withSpring(0.88), withSpring(1));
+          onPress?.();
+        }}
+        style={styles.iconButton}
+      >
         {children}
-      </Animated.View>
-    </Pressable>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -63,298 +65,317 @@ export default function PlayerScreen() {
   const {
     currentSong,
     isPlaying,
+    isLoading,
+    positionMillis,
+    durationMillis,
     position,
     duration,
-    volume,
-    isMuted,
-    shuffle,
-    repeatMode,
     togglePlayPause,
+    seekTo,
     nextSong,
     previousSong,
-    seekTo,
+    volume,
     setVolume,
+    isMuted,
     toggleMute,
+    shuffle,
     toggleShuffle,
+    repeatMode,
     toggleRepeatMode,
     toggleFavorite,
     isFavorite,
-  } = usePlayer();
+    radioMode,
+    youtubeQueue,
+    radioQueue,
+  } = usePlayer() as any;
 
-  const floatY = useSharedValue(0);
-  const playScale = useSharedValue(1);
+  const [playlistModalVisible, setPlaylistModalVisible] = useState(false);
+  const [selectedPlaylistTrack, setSelectedPlaylistTrack] = useState<any>(null);
+
+  const rotate = useSharedValue(0);
+  const pulse = useSharedValue(1);
+
+  const playbackPosition = positionMillis ?? position ?? 0;
+  const playbackDuration = durationMillis ?? duration ?? 1;
+
+  const favoriteActive = isFavorite?.(currentSong);
+
+  const queueLabel = useMemo(() => {
+    if (radioMode && radioQueue?.length) return "RADIO MODE";
+    if (youtubeQueue?.length) return `${youtubeQueue.length} IN QUEUE`;
+    return "NOW PLAYING";
+  }, [radioMode, radioQueue, youtubeQueue]);
 
   useEffect(() => {
-    floatY.value = withRepeat(
+    rotate.value = withRepeat(
+      withTiming(360, {
+        duration: 18000,
+      }),
+      -1
+    );
+
+    pulse.value = withRepeat(
       withSequence(
-        withTiming(-7, { duration: 1900 }),
-        withTiming(0, { duration: 1900 })
+        withTiming(1.04, { duration: 1400 }),
+        withTiming(1, { duration: 1400 })
       ),
-      -1,
-      true
+      -1
     );
   }, []);
 
-  const floatingStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: floatY.value }],
+  const artworkAnimated = useAnimatedStyle(() => ({
+    transform: [
+      {
+        rotate: isPlaying ? `${rotate.value}deg` : "0deg",
+      },
+      {
+        scale: isPlaying ? pulse.value : 1,
+      },
+    ],
   }));
-
-  const playButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: playScale.value }],
-  }));
-
-  const favorite = currentSong ? isFavorite(currentSong) : false;
 
   if (!currentSong) {
     return (
-      <LinearGradient
-        colors={["#03130b", "#020617", "#000000"]}
-        style={styles.container}
-      >
-        <View style={styles.emptyWrapper}>
-          <View style={styles.emptyGlow} />
-
-          <View style={styles.emptyArtwork}>
-            <Ionicons name="musical-notes" size={74} color={COLORS.primary} />
-          </View>
-
-          <Text style={styles.emptyTitle}>Nothing Playing</Text>
-
-          <Text style={styles.emptyText}>
-            Search Audius or play a song from Home to begin your premium
-            listening experience.
-          </Text>
-
-          <TouchableOpacity
-            activeOpacity={0.88}
-            style={styles.emptyButton}
-            onPress={() => router.push("/search")}
-          >
-            <Ionicons name="search" size={20} color="#000" />
-            <Text style={styles.emptyButtonText}>Discover Music</Text>
-          </TouchableOpacity>
+      <LinearGradient colors={GRADIENTS.main} style={styles.emptyContainer}>
+        <View style={styles.glowPurple} />
+        <View style={styles.emptyIcon}>
+          <Ionicons
+            name="musical-notes-outline"
+            size={64}
+            color={COLORS.primary}
+          />
         </View>
+
+        <Text style={styles.emptyText}>Nothing Playing</Text>
+
+        <Text style={styles.emptySubText}>
+          Start a song from Search, Radio, or your playlists.
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={styles.emptyButton}
+          onPress={() => router.push("/search")}
+        >
+          <Ionicons name="search" size={18} color="#000" />
+          <Text style={styles.emptyButtonText}>Find Music</Text>
+        </TouchableOpacity>
       </LinearGradient>
     );
   }
 
-  return (
-    <LinearGradient
-      colors={["#03130b", "#020617", "#000000"]}
-      style={styles.container}
-    >
-      <View style={styles.backgroundGlow} />
+  const artwork =
+    currentSong.artwork ||
+    currentSong.cover ||
+    currentSong.thumbnail ||
+    null;
 
-      <LinearGradient
-        colors={[
-          "rgba(34,197,94,0.24)",
-          "rgba(34,197,94,0.09)",
-          "transparent",
-        ]}
-        style={styles.heroBlur}
-      />
+  const artworkSource =
+    typeof artwork === "string" ? { uri: artwork } : artwork;
+
+  const artist =
+    currentSong.artist ||
+    currentSong.user?.name ||
+    currentSong.channelTitle ||
+    currentSong.sourceName ||
+    "Hidden Tunes";
+
+  return (
+    <LinearGradient colors={GRADIENTS.main} style={styles.container}>
+      <View style={styles.glowPurple} />
+      <View style={styles.glowCyan} />
 
       <ScrollView
-        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
       >
-        <Animated.View style={styles.topBar}>
-          <PremiumIconButton onPress={() => router.push("/")}>
-            <Ionicons name="chevron-down" size={24} color={COLORS.text} />
-          </PremiumIconButton>
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.topButton}>
+            <Ionicons name="chevron-down" size={26} color={COLORS.text} />
+          </TouchableOpacity>
 
-          <View style={styles.topTextBox}>
-            <Text style={styles.smallLabel}>NOW PLAYING</Text>
-            <Text style={styles.topTitle}>
-              {currentSong.isOnline ? "Online Stream" : "Hidden Tunes"}
+          <View style={styles.topCenter}>
+            <Text style={styles.playingLabel}>{queueLabel}</Text>
+
+            <Text numberOfLines={1} style={styles.artistTop}>
+              {artist}
             </Text>
           </View>
 
-          <PremiumIconButton>
+          <TouchableOpacity
+            style={styles.topButton}
+            onPress={() => {
+              setSelectedPlaylistTrack(currentSong);
+              setPlaylistModalVisible(true);
+            }}
+          >
+            <Ionicons name="add-circle-outline" size={24} color={COLORS.text} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.artworkGlow}>
+          <LinearGradient colors={GRADIENTS.neon} style={styles.artworkBorder}>
+            <Animated.View style={[styles.artworkWrapper, artworkAnimated]}>
+              {artworkSource ? (
+                <Image source={artworkSource} style={styles.artwork} />
+              ) : (
+                <LinearGradient colors={GRADIENTS.soft} style={styles.artworkFallback}>
+                  <Ionicons
+                    name="musical-notes"
+                    size={72}
+                    color={COLORS.primary}
+                  />
+                </LinearGradient>
+              )}
+            </Animated.View>
+          </LinearGradient>
+        </View>
+
+        <View style={styles.songInfo}>
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={styles.songTitle}>
+              {currentSong.title}
+            </Text>
+
+            <Text numberOfLines={1} style={styles.artistName}>
+              {artist}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[styles.favoriteButton, favoriteActive && styles.favoriteActive]}
+            onPress={() => toggleFavorite?.(currentSong)}
+          >
             <Ionicons
-              name="ellipsis-horizontal"
+              name={favoriteActive ? "heart" : "heart-outline"}
+              size={26}
+              color={favoriteActive ? COLORS.primary : COLORS.text}
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.statusPill}>
+          <Ionicons
+            name={isLoading ? "sync" : isPlaying ? "pulse" : "pause-circle"}
+            size={15}
+            color={COLORS.primary}
+          />
+          <Text style={styles.statusText}>
+            {isLoading
+              ? "Loading stream"
+              : isPlaying
+              ? "Premium playback active"
+              : "Paused"}
+          </Text>
+        </View>
+
+        <View style={styles.waveformContainer}>
+          <LiveWaveform isPlaying={isPlaying} />
+        </View>
+
+        <View style={styles.sliderContainer}>
+          <Slider
+            style={{ width: "100%" }}
+            minimumValue={0}
+            maximumValue={playbackDuration || 1}
+            value={playbackPosition}
+            minimumTrackTintColor={COLORS.primary}
+            maximumTrackTintColor="#ffffff20"
+            thumbTintColor={COLORS.primary}
+            onSlidingComplete={seekTo}
+          />
+
+          <View style={styles.timeRow}>
+            <Text style={styles.timeText}>{formatTime(playbackPosition)}</Text>
+            <Text style={styles.timeText}>{formatTime(playbackDuration)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.controlsRow}>
+          <PremiumIconButton onPress={toggleShuffle}>
+            <Ionicons
+              name="shuffle"
               size={24}
+              color={shuffle ? COLORS.primary : COLORS.textMuted}
+            />
+          </PremiumIconButton>
+
+          <PremiumIconButton onPress={previousSong}>
+            <Ionicons name="play-skip-back" size={34} color={COLORS.text} />
+          </PremiumIconButton>
+
+          <Pressable onPress={togglePlayPause} style={styles.playButton}>
+            <Ionicons
+              name={isLoading ? "sync" : isPlaying ? "pause" : "play"}
+              size={38}
+              color="#000"
+            />
+          </Pressable>
+
+          <PremiumIconButton onPress={nextSong}>
+            <Ionicons name="play-skip-forward" size={34} color={COLORS.text} />
+          </PremiumIconButton>
+
+          <PremiumIconButton onPress={toggleRepeatMode}>
+            <Ionicons
+              name={repeatMode === "one" ? "repeat-outline" : "repeat"}
+              size={24}
+              color={repeatMode !== "off" ? COLORS.primary : COLORS.textMuted}
+            />
+          </PremiumIconButton>
+        </View>
+
+        <View style={styles.extraActions}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.extraAction}
+            onPress={() => router.push("/queue")}
+          >
+            <Ionicons name="list" size={19} color={COLORS.text} />
+            <Text style={styles.extraActionText}>Queue</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.extraAction}
+            onPress={() => {
+              setSelectedPlaylistTrack(currentSong);
+              setPlaylistModalVisible(true);
+            }}
+          >
+            <Ionicons name="add" size={20} color={COLORS.text} />
+            <Text style={styles.extraActionText}>Playlist</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.volumeSection}>
+          <TouchableOpacity onPress={toggleMute} style={styles.volumeIcon}>
+            <Ionicons
+              name={isMuted ? "volume-mute" : "volume-high"}
+              size={22}
               color={COLORS.text}
             />
-          </PremiumIconButton>
-        </Animated.View>
+          </TouchableOpacity>
 
-        <Animated.View style={[styles.coverStage, floatingStyle]}>
-          <View style={styles.coverHalo} />
-
-          <View style={styles.coverFrameOuter}>
-            <LinearGradient
-              colors={[
-                "rgba(255,255,255,0.22)",
-                "rgba(34,197,94,0.12)",
-                "rgba(255,255,255,0.04)",
-              ]}
-              style={styles.coverFrameGradient}
-            >
-              <View style={styles.coverFrameInner}>
-                <Image
-                  source={
-                    typeof currentSong.cover === "string"
-                      ? { uri: currentSong.cover }
-                      : currentSong.cover
-                  }
-                  style={styles.cover}
-                />
-
-                <LinearGradient
-                  colors={[
-                    "rgba(255,255,255,0.18)",
-                    "transparent",
-                    "rgba(0,0,0,0.34)",
-                  ]}
-                  style={styles.coverOverlay}
-                />
-              </View>
-            </LinearGradient>
-          </View>
-
-          <View style={styles.coverReflection} />
-        </Animated.View>
-
-        <Animated.View style={styles.songCard}>
-          <View style={styles.songHeader}>
-            <View style={styles.songTextBox}>
-              <Text numberOfLines={1} style={styles.title}>
-                {currentSong.title}
-              </Text>
-
-              <Text numberOfLines={1} style={styles.artist}>
-                {currentSong.artist ||
-                  currentSong.user?.name ||
-                  "Unknown Artist"}
-              </Text>
-            </View>
-
-            <TouchableOpacity onPress={() => toggleFavorite(currentSong)}>
-              <Ionicons
-                name={favorite ? "heart" : "heart-outline"}
-                size={31}
-                color={favorite ? COLORS.primary : COLORS.text}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.progressBox}>
-            <Slider
-              style={styles.slider}
-              minimumValue={0}
-              maximumValue={duration || 1}
-              value={position}
-              minimumTrackTintColor={COLORS.primary}
-              maximumTrackTintColor="rgba(255,255,255,0.18)"
-              thumbTintColor={COLORS.primary}
-              onSlidingComplete={(value) => seekTo(value)}
-            />
-
-            <View style={styles.timeRow}>
-              <Text style={styles.timeText}>{formatTime(position)}</Text>
-              <Text style={styles.timeText}>{formatTime(duration)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.waveform}>
-            <LiveWaveform
-              isPlaying={isPlaying}
-              size="small"
-              color={COLORS.primary}
-            />
-          </View>
-
-          <View style={styles.mainControls}>
-            <PremiumIconButton onPress={toggleShuffle}>
-              <Ionicons
-                name="shuffle"
-                size={23}
-                color={shuffle ? COLORS.primary : COLORS.textMuted}
-              />
-            </PremiumIconButton>
-
-            <PremiumIconButton onPress={previousSong}>
-              <Ionicons name="play-skip-back" size={29} color={COLORS.text} />
-            </PremiumIconButton>
-
-            <Pressable
-              onPress={togglePlayPause}
-              onPressIn={() => {
-                playScale.value = withSpring(0.9);
-              }}
-              onPressOut={() => {
-                playScale.value = withSpring(1);
-              }}
-            >
-              <Animated.View style={[styles.playButton, playButtonStyle]}>
-                <Ionicons
-                  name={isPlaying ? "pause" : "play"}
-                  size={40}
-                  color="#000"
-                />
-              </Animated.View>
-            </Pressable>
-
-            <PremiumIconButton onPress={nextSong}>
-              <Ionicons
-                name="play-skip-forward"
-                size={29}
-                color={COLORS.text}
-              />
-            </PremiumIconButton>
-
-            <PremiumIconButton onPress={toggleRepeatMode}>
-              <Ionicons
-                name={repeatMode === "one" ? "repeat-outline" : "repeat"}
-                size={23}
-                color={repeatMode !== "off" ? COLORS.primary : COLORS.textMuted}
-              />
-            </PremiumIconButton>
-          </View>
-
-          <View style={styles.volumeCard}>
-            <TouchableOpacity onPress={toggleMute}>
-              <Ionicons
-                name={isMuted || volume === 0 ? "volume-mute" : "volume-high"}
-                size={23}
-                color={COLORS.textMuted}
-              />
-            </TouchableOpacity>
-
-            <Slider
-              style={styles.volumeSlider}
-              minimumValue={0}
-              maximumValue={1}
-              value={isMuted ? 0 : volume}
-              minimumTrackTintColor={COLORS.primary}
-              maximumTrackTintColor="rgba(255,255,255,0.18)"
-              thumbTintColor={COLORS.primary}
-              onSlidingComplete={(value) => setVolume(value)}
-            />
-          </View>
-
-          <View style={styles.sourcePill}>
-            <Ionicons
-              name={
-                currentSong.isOnline
-                  ? "cloud-outline"
-                  : "phone-portrait-outline"
-              }
-              size={15}
-              color={COLORS.primary}
-            />
-
-            <Text style={styles.sourceText}>
-              {currentSong.isOnline
-                ? "Streaming online"
-                : "Playing from local library"}
-            </Text>
-          </View>
-        </Animated.View>
-
-        <View style={{ height: 120 }} />
+          <Slider
+            style={{ flex: 1 }}
+            minimumValue={0}
+            maximumValue={1}
+            value={volume}
+            minimumTrackTintColor={COLORS.primary}
+            maximumTrackTintColor="#ffffff20"
+            thumbTintColor={COLORS.primary}
+            onValueChange={setVolume}
+          />
+        </View>
       </ScrollView>
+
+      <AddToPlaylistModal
+        visible={playlistModalVisible}
+        track={selectedPlaylistTrack}
+        onClose={() => setPlaylistModalVisible(false)}
+      />
     </LinearGradient>
   );
 }
@@ -364,89 +385,79 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  emptyWrapper: {
+  glowPurple: {
+    position: "absolute",
+    top: 50,
+    left: -120,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: "rgba(168,85,247,0.18)",
+  },
+
+  glowCyan: {
+    position: "absolute",
+    top: 300,
+    right: -130,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: "rgba(34,211,238,0.1)",
+  },
+
+  content: {
+    paddingTop: 60,
+    paddingHorizontal: 24,
+    paddingBottom: 150,
+  },
+
+  emptyContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 30,
+    paddingHorizontal: 28,
   },
 
-  emptyGlow: {
-    position: "absolute",
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: "rgba(34,197,94,0.12)",
-  },
-
-  emptyArtwork: {
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    backgroundColor: "rgba(15,23,42,0.75)",
-    borderWidth: 1,
-    borderColor: "rgba(34,197,94,0.25)",
+  emptyIcon: {
+    width: 118,
+    height: 118,
+    borderRadius: 59,
+    backgroundColor: "rgba(255,255,255,0.07)",
     alignItems: "center",
     justifyContent: "center",
-  },
-
-  emptyTitle: {
-    color: COLORS.text,
-    fontSize: 30,
-    fontWeight: "900",
-    marginTop: 34,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
   },
 
   emptyText: {
+    color: COLORS.text,
+    fontSize: 24,
+    fontWeight: "900",
+    marginTop: 18,
+  },
+
+  emptySubText: {
     color: COLORS.textMuted,
-    fontSize: 15,
+    fontSize: 14,
     textAlign: "center",
-    lineHeight: 24,
-    marginTop: 14,
-    paddingHorizontal: 10,
+    lineHeight: 21,
+    marginTop: 8,
   },
 
   emptyButton: {
-    marginTop: 28,
-    height: 56,
-    paddingHorizontal: 24,
-    borderRadius: 999,
-    backgroundColor: COLORS.primary,
+    marginTop: 24,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 8,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    borderRadius: 999,
   },
 
   emptyButtonText: {
     color: "#000",
-    fontSize: 14,
     fontWeight: "900",
-    marginLeft: 8,
-  },
-
-  backgroundGlow: {
-    position: "absolute",
-    top: 60,
-    alignSelf: "center",
-    width: 340,
-    height: 340,
-    borderRadius: 170,
-    backgroundColor: "rgba(34,197,94,0.18)",
-  },
-
-  heroBlur: {
-    position: "absolute",
-    top: -120,
-    alignSelf: "center",
-    width: 520,
-    height: 520,
-    borderRadius: 260,
-  },
-
-  content: {
-    paddingTop: 50,
-    paddingHorizontal: 22,
-    paddingBottom: 30,
   },
 
   topBar: {
@@ -455,211 +466,222 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
 
-  topTextBox: {
-    alignItems: "center",
-  },
-
-  smallLabel: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 1,
-  },
-
-  topTitle: {
-    color: COLORS.text,
-    fontSize: 13,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-
-  iconButton: {
+  topButton: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(15,23,42,0.72)",
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.075)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(255,255,255,0.08)",
   },
 
-  coverStage: {
-    marginTop: 22,
+  topCenter: {
+    alignItems: "center",
+    flex: 1,
+    paddingHorizontal: 14,
+  },
+
+  playingLabel: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    letterSpacing: 2,
+    fontWeight: "900",
+  },
+
+  artistTop: {
+    color: COLORS.text,
+    marginTop: 4,
+    fontWeight: "800",
+    maxWidth: 210,
+  },
+
+  artworkGlow: {
+    alignSelf: "center",
+    marginTop: 38,
+    shadowColor: "#A855F7",
+    shadowOpacity: 0.35,
+    shadowRadius: 28,
+    shadowOffset: {
+      width: 0,
+      height: 16,
+    },
+    elevation: 9,
+  },
+
+  artworkBorder: {
+    width: 314,
+    height: 314,
+    borderRadius: 157,
+    padding: 3,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  coverHalo: {
-    position: "absolute",
-    width: 290,
-    height: 290,
-    borderRadius: 145,
-    backgroundColor: "rgba(34,197,94,0.16)",
-  },
-
-  coverFrameOuter: {
-    width: "92%",
-    aspectRatio: 1,
-    borderRadius: 44,
-    shadowColor: "#22c55e",
-    shadowOpacity: 0.48,
-    shadowRadius: 34,
-    shadowOffset: {
-      width: 0,
-      height: 22,
-    },
-    elevation: 28,
-  },
-
-  coverFrameGradient: {
-    flex: 1,
-    borderRadius: 44,
-    padding: 3,
-  },
-
-  coverFrameInner: {
-    flex: 1,
-    borderRadius: 41,
+  artworkWrapper: {
+    width: 308,
+    height: 308,
+    borderRadius: 154,
     overflow: "hidden",
-    backgroundColor: COLORS.cardLight,
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: COLORS.card,
   },
 
-  cover: {
+  artwork: {
     width: "100%",
     height: "100%",
   },
 
-  coverOverlay: {
-    ...StyleSheet.absoluteFillObject,
+  artworkFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  coverReflection: {
-    marginTop: 15,
-    width: "62%",
-    height: 16,
-    borderRadius: 999,
-    backgroundColor: "rgba(34,197,94,0.14)",
-  },
-
-  songCard: {
-    marginTop: 24,
-    backgroundColor: "rgba(15,23,42,0.76)",
-    borderRadius: 32,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-  },
-
-  songHeader: {
+  songInfo: {
+    marginTop: 34,
     flexDirection: "row",
     alignItems: "center",
+    gap: 14,
   },
 
-  songTextBox: {
-    flex: 1,
-    paddingRight: 14,
-  },
-
-  title: {
+  songTitle: {
     color: COLORS.text,
-    fontSize: 25,
+    fontSize: 28,
     fontWeight: "900",
+    letterSpacing: -0.6,
   },
 
-  artist: {
+  artistName: {
     color: COLORS.textMuted,
-    fontSize: 14,
     marginTop: 6,
+    fontSize: 15,
     fontWeight: "700",
   },
 
-  progressBox: {
-    marginTop: 20,
+  favoriteButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.075)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  slider: {
-    width: "100%",
-    height: 34,
+  favoriteActive: {
+    backgroundColor: "rgba(168,85,247,0.15)",
+  },
+
+  statusPill: {
+    marginTop: 16,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: "rgba(255,255,255,0.075)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+
+  statusText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  waveformContainer: {
+    marginTop: 28,
+    marginBottom: 10,
+  },
+
+  sliderContainer: {
+    marginTop: 12,
   },
 
   timeRow: {
+    marginTop: 8,
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: -2,
   },
 
   timeText: {
     color: COLORS.textMuted,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "700",
   },
 
-  waveform: {
-    marginTop: 18,
-    height: 44,
+  controlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 34,
+  },
+
+  iconButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "rgba(255,255,255,0.075)",
     alignItems: "center",
     justifyContent: "center",
   },
 
-  mainControls: {
-    marginTop: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
   playButton: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
+    width: 82,
+    height: 82,
+    borderRadius: 41,
     backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: COLORS.primary,
-    shadowOpacity: 0.55,
-    shadowRadius: 18,
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
     shadowOffset: {
       width: 0,
-      height: 8,
+      height: 12,
     },
-    elevation: 15,
+    elevation: 8,
   },
 
-  volumeCard: {
+  extraActions: {
     marginTop: 24,
-    height: 50,
-    borderRadius: 25,
-    paddingHorizontal: 14,
-    backgroundColor: "rgba(2,6,23,0.68)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
     flexDirection: "row",
-    alignItems: "center",
+    gap: 12,
   },
 
-  volumeSlider: {
+  extraAction: {
     flex: 1,
-    marginLeft: 10,
-  },
-
-  sourcePill: {
-    alignSelf: "center",
-    marginTop: 16,
-    minHeight: 36,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    backgroundColor: "rgba(34,197,94,0.1)",
+    minHeight: 52,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
   },
 
-  sourceText: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: "800",
-    marginLeft: 7,
+  extraActionText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  volumeSection: {
+    marginTop: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  volumeIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.075)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

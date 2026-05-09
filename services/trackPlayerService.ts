@@ -1,27 +1,37 @@
-import TrackPlayer, { Event } from "react-native-track-player";
-
 export async function PlaybackService() {
-  TrackPlayer.addEventListener(Event.RemotePlay, async () => {
-    await TrackPlayer.play();
-  });
-
-  TrackPlayer.addEventListener(Event.RemotePause, async () => {
-    await TrackPlayer.pause();
-  });
-
-  TrackPlayer.addEventListener(Event.RemoteStop, async () => {
-    await TrackPlayer.stop();
-  });
-
-  TrackPlayer.addEventListener(Event.RemoteNext, async () => {
-    await TrackPlayer.skipToNext();
-  });
-
-  TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
-    await TrackPlayer.skipToPrevious();
-  });
-
-  TrackPlayer.addEventListener(Event.RemoteSeek, async (event) => {
-    await TrackPlayer.seekTo(event.position);
-  });
+  console.log("TrackPlayer PlaybackService disabled in Expo Go.");
 }
+
+export async function setupTrackPlayer() {
+  console.log("TrackPlayer setup skipped. Using expo-av for now.");
+}
+
+export async function resetTrackPlayer() {
+  console.log("TrackPlayer reset skipped.");
+}
+
+export async function addTrackToPlayer(_track: any) {
+  console.log("TrackPlayer add skipped.");
+}
+
+export async function playTrackPlayer() {
+  console.log("TrackPlayer play skipped.");
+}
+
+export async function pauseTrackPlayer() {
+  console.log("TrackPlayer pause skipped.");
+}
+
+export async function stopTrackPlayer() {
+  console.log("TrackPlayer stop skipped.");
+}
+
+export default {
+  PlaybackService,
+  setupTrackPlayer,
+  resetTrackPlayer,
+  addTrackToPlayer,
+  playTrackPlayer,
+  pauseTrackPlayer,
+  stopTrackPlayer,
+};

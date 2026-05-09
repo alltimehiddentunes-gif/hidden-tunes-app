@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
-  Linking,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -12,35 +11,60 @@ import {
 
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 
 import { COLORS, GRADIENTS } from "@/constants/theme";
-import { fetchChannelVideos, YouTubeVideo } from "@/services/youtube";
+import {
+  getHiddenTunesYouTubeCatalog,
+  type BackendYouTubeTrack,
+} from "@/services/youtubeBackend";
+
+const FALLBACK_THUMBNAIL =
+  "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=1000";
+
+function getVideoId(item: BackendYouTubeTrack) {
+  return String(item.videoId || item.id || "").replace("youtube-", "").trim();
+}
 
 export default function HiddenTunesTVScreen() {
-  const [videos, setVideos] = useState<YouTubeVideo[]>([]);
+  const [videos, setVideos] = useState<BackendYouTubeTrack[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadVideos = async () => {
+  async function loadVideos() {
     try {
       setLoading(true);
-      const data = await fetchChannelVideos();
-      setVideos(data);
+
+      const data = await getHiddenTunesYouTubeCatalog();
+      setVideos(Array.isArray(data) ? data : []);
     } catch (error) {
       console.log("Hidden Tunes TV load error:", error);
+      setVideos([]);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const openVideo = async (videoId: string) => {
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
+  function openVideo(item: BackendYouTubeTrack) {
+    const videoId = getVideoId(item);
 
-    try {
-      await Linking.openURL(url);
-    } catch (error) {
-      console.log("Open video error:", error);
+    if (!videoId) {
+      console.log("Missing Hidden Tunes TV videoId:", item);
+      return;
     }
-  };
+
+    router.push({
+      pathname: "/youtube-player",
+      params: {
+        id: videoId,
+        videoId,
+        title: item.title || "Hidden Tunes TV",
+        artist: item.artist || item.channelTitle || "Hidden Tunes",
+        channelTitle: item.channelTitle || item.artist || "Hidden Tunes",
+        thumbnail:
+          item.thumbnail || item.artwork || item.cover || FALLBACK_THUMBNAIL,
+      },
+    } as any);
+  }
 
   useEffect(() => {
     loadVideos();
@@ -51,10 +75,14 @@ export default function HiddenTunesTVScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Hidden Tunes TV</Text>
-          <Text style={styles.subtitle}>Latest videos from your channel</Text>
+          <Text style={styles.subtitle}>Only videos from your channel</Text>
         </View>
 
-        <TouchableOpacity style={styles.refreshButton} onPress={loadVideos}>
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={loadVideos}
+          activeOpacity={0.85}
+        >
           <Ionicons name="refresh" size={22} color={COLORS.text} />
         </TouchableOpacity>
       </View>
@@ -67,17 +95,28 @@ export default function HiddenTunesTVScreen() {
       ) : (
         <FlatList
           data={videos}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) =>
+            `${item.videoId || item.id || "hidden-tv"}-${index}`
+          }
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 170 }}
           renderItem={({ item }) => (
             <TouchableOpacity
               activeOpacity={0.85}
               style={styles.videoCard}
-              onPress={() => openVideo(item.id)}
+              onPress={() => openVideo(item)}
             >
               <View style={styles.thumbnailBox}>
-                <Image source={{ uri: item.thumbnail }} style={styles.thumbnail} />
+                <Image
+                  source={{
+                    uri:
+                      item.thumbnail ||
+                      item.artwork ||
+                      item.cover ||
+                      FALLBACK_THUMBNAIL,
+                  }}
+                  style={styles.thumbnail}
+                />
 
                 <View style={styles.playOverlay}>
                   <Ionicons name="play" size={30} color="#fff" />
@@ -85,17 +124,17 @@ export default function HiddenTunesTVScreen() {
 
                 <View style={styles.badge}>
                   <Ionicons name="logo-youtube" size={14} color="#fff" />
-                  <Text style={styles.badgeText}>TV</Text>
+                  <Text style={styles.badgeText}>HIDDEN TV</Text>
                 </View>
               </View>
 
               <View style={styles.videoInfo}>
                 <Text numberOfLines={2} style={styles.videoTitle}>
-                  {item.title}
+                  {item.title || "Hidden Tunes Video"}
                 </Text>
 
                 <Text numberOfLines={1} style={styles.channel}>
-                  {item.channelTitle}
+                  {item.channelTitle || item.artist || "Hidden Tunes"}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -103,7 +142,7 @@ export default function HiddenTunesTVScreen() {
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Ionicons name="tv-outline" size={42} color={COLORS.textMuted} />
-              <Text style={styles.emptyText}>No videos found.</Text>
+              <Text style={styles.emptyText}>No Hidden Tunes videos found.</Text>
             </View>
           }
         />

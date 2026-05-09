@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   FlatList,
   Image,
@@ -16,6 +17,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
 import NeonEQ from "../../components/NeonEQ";
+import MediaCard from "../../components/MediaCard";
+
 import { COLORS, GRADIENTS } from "../../constants/theme";
 import { usePlayer } from "../../context/PlayerContext";
 import {
@@ -29,301 +32,429 @@ const FEATURED_CARD_WIDTH = width * 0.72;
 export default function HomeScreen() {
   const { playAudiusTrack, currentSong, isPlaying } = usePlayer();
 
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(18)).current;
+  const heroScale = useRef(new Animated.Value(0.96)).current;
+
   const [featuredSongs, setFeaturedSongs] = useState<HiddenTunesSong[]>([]);
   const [loadingSongs, setLoadingSongs] = useState(true);
 
   useEffect(() => {
     loadFeaturedSongs();
+
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 520,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 520,
+        useNativeDriver: true,
+      }),
+      Animated.spring(heroScale, {
+        toValue: 1,
+        friction: 8,
+        tension: 60,
+        useNativeDriver: true,
+      }),
+    ]).start();
   }, []);
 
   const loadFeaturedSongs = async () => {
-    setLoadingSongs(true);
-
-    const songs = await fetchHiddenTunesSongs();
-
-    setFeaturedSongs(songs);
-    setLoadingSongs(false);
+    try {
+      setLoadingSongs(true);
+      const songs = await fetchHiddenTunesSongs();
+      setFeaturedSongs(songs);
+    } catch (error) {
+      console.log("Load featured songs error:", error);
+      setFeaturedSongs([]);
+    } finally {
+      setLoadingSongs(false);
+    }
   };
 
   const heroTrack = featuredSongs[0];
 
-  function playFeaturedSong(song: HiddenTunesSong) {
-    playAudiusTrack(song);
-  }
+  const playFeaturedSong = async (song: HiddenTunesSong) => {
+    await playAudiusTrack({
+      ...song,
+      id: String(song.id),
+      title: song.title,
+      artist: song.artist,
+      cover: song.cover,
+      artwork: song.cover,
+      sourceName: "Hidden Tunes",
+      isOnline: true,
+    } as any);
+  };
+
+  const getSongImage = (song: HiddenTunesSong) => {
+    return song.cover || null;
+  };
 
   return (
     <LinearGradient colors={GRADIENTS.main} style={styles.container}>
       <View style={styles.glowPurple} />
       <View style={styles.glowCyan} />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+      <Animated.View
+        style={[
+          styles.animatedWrap,
+          {
+            opacity: fadeAnim,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
       >
-        <View style={styles.header}>
-          <View style={styles.logoBox}>
-            <Ionicons name="musical-notes" size={24} color={COLORS.primary} />
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
+          <View style={styles.header}>
+            <View style={styles.logoBox}>
+              <Ionicons
+                name="musical-notes"
+                size={24}
+                color={COLORS.primary}
+              />
+            </View>
+
+            <View>
+              <Text style={styles.logoText}>Hidden Tunes</Text>
+              <Text style={styles.logoSub}>Premium Audio</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.searchButton}
+              onPress={() => router.push("/search")}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="search" size={22} color={COLORS.text} />
+            </TouchableOpacity>
           </View>
 
-          <View>
-            <Text style={styles.logoText}>Hidden Tunes</Text>
-            <Text style={styles.logoSub}>Premium Audio</Text>
-          </View>
+          <Text style={styles.heroTitle}>Hidden Sound.</Text>
+
+          <Text style={styles.heroSubtitle}>
+            Rare music. Clean design. Premium playback.
+          </Text>
 
           <TouchableOpacity
-            style={styles.searchButton}
+            activeOpacity={0.9}
+            style={styles.searchBar}
             onPress={() => router.push("/search")}
-            activeOpacity={0.85}
           >
-            <Ionicons name="search" size={22} color={COLORS.text} />
+            <Ionicons name="search" size={20} color={COLORS.cyan} />
+            <Text style={styles.searchText}>Search music...</Text>
+            <Ionicons name="sparkles" size={18} color={COLORS.primary} />
           </TouchableOpacity>
-        </View>
 
-        <Text style={styles.heroTitle}>Hidden Sound.</Text>
+          <Animated.View
+            style={[
+              styles.heroOuter,
+              {
+                transform: [{ scale: heroScale }],
+              },
+            ]}
+          >
+            <LinearGradient colors={GRADIENTS.neon} style={styles.heroBorder}>
+              <TouchableOpacity
+                activeOpacity={0.92}
+                style={styles.heroCard}
+                onPress={() => heroTrack && playFeaturedSong(heroTrack)}
+              >
+                {heroTrack ? (
+                  <>
+                    <Image
+                      source={{ uri: heroTrack.cover }}
+                      style={styles.heroImage}
+                    />
 
-        <Text style={styles.heroSubtitle}>
-          Rare music. Clean design. Premium playback.
-        </Text>
-
-        <TouchableOpacity
-          activeOpacity={0.9}
-          style={styles.searchBar}
-          onPress={() => router.push("/search")}
-        >
-          <Ionicons name="search" size={20} color={COLORS.cyan} />
-          <Text style={styles.searchText}>Search music...</Text>
-          <Ionicons name="sparkles" size={18} color={COLORS.primary} />
-        </TouchableOpacity>
-
-        <View style={styles.heroOuter}>
-          <LinearGradient colors={GRADIENTS.neon} style={styles.heroBorder}>
-            <View style={styles.heroCard}>
-              {heroTrack ? (
-                <>
-                  <Image source={{ uri: heroTrack.cover }} style={styles.heroImage} />
-
-                  <LinearGradient
-                    colors={["transparent", "rgba(0,0,0,0.98)"]}
-                    style={styles.overlay}
-                  >
-                    <View style={styles.livePill}>
-                      <NeonEQ
-                        isPlaying={isPlaying && currentSong?.id === heroTrack.id}
-                        size="small"
-                      />
-                      <Text style={styles.liveText}>FEATURED</Text>
-                    </View>
-
-                    <Text numberOfLines={1} style={styles.heroSong}>
-                      {heroTrack.title}
-                    </Text>
-
-                    <Text numberOfLines={1} style={styles.heroArtist}>
-                      {heroTrack.artist}
-                    </Text>
-
-                    <TouchableOpacity
-                      style={styles.playButton}
-                      activeOpacity={0.85}
-                      onPress={() => playFeaturedSong(heroTrack)}
+                    <LinearGradient
+                      colors={["transparent", "rgba(0,0,0,0.98)"]}
+                      style={styles.overlay}
                     >
-                      <Ionicons name="play" size={18} color="#000" />
-                      <Text style={styles.playText}>PLAY</Text>
-                    </TouchableOpacity>
-                  </LinearGradient>
-                </>
-              ) : (
-                <View style={styles.heroEmpty}>
-                  <Ionicons name="musical-notes" size={44} color={COLORS.primary} />
-                  <Text style={styles.heroEmptyText}>No featured track yet</Text>
-                </View>
-              )}
-            </View>
-          </LinearGradient>
-        </View>
+                      <View style={styles.livePill}>
+                        <NeonEQ
+                          isPlaying={
+                            isPlaying && currentSong?.id === heroTrack.id
+                          }
+                          size="small"
+                        />
+                        <Text style={styles.liveText}>FEATURED</Text>
+                      </View>
 
-        <View style={styles.grid}>
-          <PremiumCard
-            icon="headset"
-            title="Music"
-            color={COLORS.primary}
-            onPress={() => router.push("/music-feed" as any)}
-          />
+                      <Text numberOfLines={1} style={styles.heroSong}>
+                        {heroTrack.title}
+                      </Text>
 
-          <PremiumCard
-            icon="search"
-            title="Search"
-            color={COLORS.cyan}
-            onPress={() => router.push("/search")}
-          />
+                      <Text numberOfLines={1} style={styles.heroArtist}>
+                        {heroTrack.artist}
+                      </Text>
 
-          <PremiumCard
-            icon="list"
-            title="Queue"
-            color={COLORS.pink}
-            onPress={() => router.push("/queue")}
-          />
-
-          <PremiumCard
-            icon="logo-youtube"
-            title="TV"
-            color="#ff0033"
-            onPress={() => router.push("/youtube-feed" as any)}
-          />
-        </View>
-
-        <View style={styles.sectionRow}>
-          <View>
-            <Text style={styles.sectionTitle}>Featured Songs</Text>
-            <Text style={styles.sectionSub}>Slide, tap, and keep the music moving</Text>
-          </View>
-
-          <TouchableOpacity onPress={loadFeaturedSongs} style={styles.refreshMini}>
-            <Ionicons name="refresh" size={20} color={COLORS.text} />
-          </TouchableOpacity>
-        </View>
-
-        {loadingSongs ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="small" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Loading featured songs...</Text>
-          </View>
-        ) : featuredSongs.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyTitle}>No tracks found</Text>
-            <Text style={styles.emptyText}>Update your songs.json file.</Text>
-          </View>
-        ) : (
-          <FlatList
-            horizontal
-            data={featuredSongs}
-            keyExtractor={(item, index) => `slide-${item.id}-${index}`}
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={FEATURED_CARD_WIDTH + 16}
-            decelerationRate="fast"
-            contentContainerStyle={styles.featuredSlider}
-            renderItem={({ item, index }) => {
-              const active = currentSong?.id === String(item.id);
-
-              return (
-                <TouchableOpacity
-                  activeOpacity={0.88}
-                  style={[
-                    styles.featuredCard,
-                    active && styles.featuredCardActive,
-                  ]}
-                  onPress={() => playFeaturedSong(item)}
-                >
-                  <Image source={{ uri: item.cover }} style={styles.featuredCover} />
-
-                  <LinearGradient
-                    colors={["transparent", "rgba(0,0,0,0.96)"]}
-                    style={styles.featuredOverlay}
-                  />
-
-                  <View style={styles.featuredRank}>
-                    <Text style={styles.featuredRankText}>
-                      {String(index + 1).padStart(2, "0")}
+                      <View style={styles.playButton}>
+                        <Ionicons name="play" size={18} color="#000" />
+                        <Text style={styles.playText}>PLAY</Text>
+                      </View>
+                    </LinearGradient>
+                  </>
+                ) : (
+                  <View style={styles.heroEmpty}>
+                    <Ionicons
+                      name="musical-notes"
+                      size={44}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.heroEmptyText}>
+                      No featured track yet
                     </Text>
                   </View>
+                )}
+              </TouchableOpacity>
+            </LinearGradient>
+          </Animated.View>
 
-                  <View style={styles.featuredContent}>
-                    <View style={styles.featuredBadge}>
-                      {active ? (
-                        <NeonEQ isPlaying={isPlaying} size="small" />
-                      ) : (
-                        <Ionicons name="sparkles" size={13} color={COLORS.primary} />
-                      )}
+          <View style={styles.grid}>
+            <PremiumCard
+              icon="headset"
+              title="Music"
+              color={COLORS.primary}
+              onPress={() => router.push("/music-feed" as any)}
+            />
 
-                      <Text style={styles.featuredBadgeText}>
-                        {active ? "NOW PLAYING" : "FEATURED"}
+            <PremiumCard
+              icon="search"
+              title="Search"
+              color={COLORS.cyan}
+              onPress={() => router.push("/search")}
+            />
+
+            <PremiumCard
+              icon="list"
+              title="Queue"
+              color={COLORS.pink}
+              onPress={() => router.push("/queue")}
+            />
+
+            <PremiumCard
+              icon="logo-youtube"
+              title="TV"
+              color="#ff0033"
+              onPress={() => router.push("/youtube-feed" as any)}
+            />
+          </View>
+
+          <View style={styles.sectionRow}>
+            <View>
+              <Text style={styles.sectionTitle}>Featured Songs</Text>
+              <Text style={styles.sectionSub}>
+                Slide, tap, and keep the music moving
+              </Text>
+            </View>
+
+            <TouchableOpacity onPress={loadFeaturedSongs} style={styles.refreshMini}>
+              <Ionicons name="refresh" size={20} color={COLORS.text} />
+            </TouchableOpacity>
+          </View>
+
+          {loadingSongs ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+              <Text style={styles.loadingText}>Loading featured songs...</Text>
+            </View>
+          ) : featuredSongs.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>No tracks found</Text>
+              <Text style={styles.emptyText}>Update your songs.json file.</Text>
+            </View>
+          ) : (
+            <FlatList
+              horizontal
+              data={featuredSongs}
+              keyExtractor={(item, index) => `slide-${item.id}-${index}`}
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={FEATURED_CARD_WIDTH + 16}
+              decelerationRate="fast"
+              contentContainerStyle={styles.featuredSlider}
+              renderItem={({ item, index }) => {
+                const active = currentSong?.id === String(item.id);
+
+                return (
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    style={[
+                      styles.featuredCard,
+                      active && styles.featuredCardActive,
+                    ]}
+                    onPress={() => playFeaturedSong(item)}
+                  >
+                    <Image
+                      source={{ uri: item.cover }}
+                      style={styles.featuredCover}
+                    />
+
+                    <LinearGradient
+                      colors={["transparent", "rgba(0,0,0,0.96)"]}
+                      style={styles.featuredOverlay}
+                    />
+
+                    <View style={styles.featuredRank}>
+                      <Text style={styles.featuredRankText}>
+                        {String(index + 1).padStart(2, "0")}
                       </Text>
                     </View>
 
-                    <Text numberOfLines={1} style={styles.featuredTitle}>
-                      {item.title}
-                    </Text>
+                    <View style={styles.featuredContent}>
+                      <View style={styles.featuredBadge}>
+                        {active ? (
+                          <NeonEQ isPlaying={isPlaying} size="small" />
+                        ) : (
+                          <Ionicons
+                            name="sparkles"
+                            size={13}
+                            color={COLORS.primary}
+                          />
+                        )}
 
-                    <Text numberOfLines={1} style={styles.featuredArtist}>
-                      {item.artist}
-                    </Text>
-
-                    <View style={styles.featuredBottom}>
-                      <View style={styles.autoNextPill}>
-                        <Ionicons name="play-skip-forward" size={13} color={COLORS.text} />
-                        <Text style={styles.autoNextText}>Auto-next ready</Text>
+                        <Text style={styles.featuredBadgeText}>
+                          {active ? "NOW PLAYING" : "FEATURED"}
+                        </Text>
                       </View>
 
-                      <View style={styles.featuredPlay}>
-                        <Ionicons
-                          name={active && isPlaying ? "pause" : "play"}
-                          size={18}
-                          color="#000"
-                        />
+                      <Text numberOfLines={1} style={styles.featuredTitle}>
+                        {item.title}
+                      </Text>
+
+                      <Text numberOfLines={1} style={styles.featuredArtist}>
+                        {item.artist}
+                      </Text>
+
+                      <View style={styles.featuredBottom}>
+                        <View style={styles.autoNextPill}>
+                          <Ionicons
+                            name="play-skip-forward"
+                            size={13}
+                            color={COLORS.text}
+                          />
+                          <Text style={styles.autoNextText}>
+                            Auto-next ready
+                          </Text>
+                        </View>
+
+                        <View style={styles.featuredPlay}>
+                          <Ionicons
+                            name={active && isPlaying ? "pause" : "play"}
+                            size={18}
+                            color="#000"
+                          />
+                        </View>
                       </View>
                     </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          )}
+
+          <View style={styles.sectionRowSmall}>
+            <Text style={styles.sectionTitle}>All Featured</Text>
+          </View>
+
+          <View style={styles.mediaList}>
+            {featuredSongs.map((song, index) => {
+              const active = currentSong?.id === String(song.id);
+
+              return (
+                <View
+                  key={`featured-row-${song.id}-${index}`}
+                  style={[
+                    styles.mediaShell,
+                    active && styles.mediaShellActive,
+                  ]}
+                >
+                  <MediaCard
+                    title={song.title}
+                    subtitle={`${song.artist} • Hidden Tunes`}
+                    image={getSongImage(song)}
+                    type="song"
+                    size="medium"
+                    showPlayButton={false}
+                    onPress={() => playFeaturedSong(song)}
+                  />
+
+                  <View style={styles.mediaAction}>
+                    {active ? (
+                      <NeonEQ isPlaying={isPlaying} size="small" />
+                    ) : (
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        style={styles.rowPlayButton}
+                        onPress={() => playFeaturedSong(song)}
+                      >
+                        <Ionicons name="play" size={18} color="#000" />
+                      </TouchableOpacity>
+                    )}
                   </View>
-                </TouchableOpacity>
+                </View>
               );
-            }}
-          />
-        )}
+            })}
+          </View>
 
-        <View style={styles.sectionRowSmall}>
-          <Text style={styles.sectionTitle}>All Featured</Text>
-        </View>
-
-        {featuredSongs.map((song, index) => {
-          const active = currentSong?.id === String(song.id);
-
-          return (
-            <TouchableOpacity
-              key={`featured-row-${song.id}-${index}`}
-              style={[styles.songRow, active && styles.songRowActive]}
-              activeOpacity={0.85}
-              onPress={() => playFeaturedSong(song)}
-            >
-              <Image source={{ uri: song.cover }} style={styles.cover} />
-
-              <View style={styles.songInfo}>
-                <Text numberOfLines={1} style={styles.songTitle}>
-                  {song.title}
-                </Text>
-
-                <Text numberOfLines={1} style={styles.songArtist}>
-                  {song.artist}
-                </Text>
-              </View>
-
-              {active ? (
-                <NeonEQ isPlaying={isPlaying} size="small" />
-              ) : (
-                <Ionicons name="play-circle" size={31} color={COLORS.primary} />
-              )}
-            </TouchableOpacity>
-          );
-        })}
-
-        <View style={{ height: 140 }} />
-      </ScrollView>
+          <View style={{ height: 140 }} />
+        </ScrollView>
+      </Animated.View>
     </LinearGradient>
   );
 }
 
 function PremiumCard({ icon, title, color, onPress }: any) {
-  return (
-    <TouchableOpacity style={styles.gridCard} activeOpacity={0.88} onPress={onPress}>
-      <View style={[styles.iconCircle, { borderColor: color }]}>
-        <Ionicons name={icon} size={23} color={color} />
-      </View>
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-      <Text style={styles.gridTitle}>{title}</Text>
-    </TouchableOpacity>
+  const pressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.94,
+      friction: 7,
+      tension: 90,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const pressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 7,
+      tension: 90,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+      <TouchableOpacity
+        style={styles.gridCard}
+        activeOpacity={0.88}
+        onPress={onPress}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+      >
+        <View style={[styles.iconCircle, { borderColor: color }]}>
+          <Ionicons name={icon} size={23} color={color} />
+        </View>
+
+        <Text style={styles.gridTitle}>{title}</Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+
+  animatedWrap: {
     flex: 1,
   },
 
@@ -536,7 +667,7 @@ const styles = StyleSheet.create({
   },
 
   gridCard: {
-    width: "23%",
+    width: (width - 64) / 4,
     height: 88,
     backgroundColor: "rgba(255,255,255,0.055)",
     borderRadius: 22,
@@ -760,45 +891,35 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  songRow: {
-    marginHorizontal: 20,
-    marginBottom: 12,
-    backgroundColor: "rgba(255,255,255,0.055)",
-    borderRadius: 24,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+  mediaList: {
+    paddingHorizontal: 20,
   },
 
-  songRowActive: {
-    borderColor: "rgba(168,85,247,0.55)",
+  mediaShell: {
+    position: "relative",
+  },
+
+  mediaShellActive: {
+    borderRadius: 28,
     backgroundColor: "rgba(168,85,247,0.12)",
   },
 
-  cover: {
-    width: 68,
-    height: 68,
-    borderRadius: 19,
-    backgroundColor: COLORS.cardLight,
+  mediaAction: {
+    position: "absolute",
+    right: 16,
+    top: 27,
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  songInfo: {
-    flex: 1,
-    marginLeft: 14,
-  },
-
-  songTitle: {
-    color: COLORS.text,
-    fontSize: 16,
-    fontWeight: "900",
-  },
-
-  songArtist: {
-    color: COLORS.textMuted,
-    marginTop: 6,
-    fontSize: 13,
-    fontWeight: "700",
+  rowPlayButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

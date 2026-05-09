@@ -30,6 +30,25 @@ export const COLORS = {
   shadow: "#000000",
 };
 
+export const Colors = {
+  light: {
+    text: "#11181C",
+    background: "#FFFFFF",
+    tint: COLORS.primary,
+    icon: "#687076",
+    tabIconDefault: "#687076",
+    tabIconSelected: COLORS.primary,
+  },
+  dark: {
+    text: COLORS.text,
+    background: COLORS.background,
+    tint: COLORS.primary,
+    icon: COLORS.textMuted,
+    tabIconDefault: COLORS.textMuted,
+    tabIconSelected: COLORS.primary,
+  },
+};
+
 export const GRADIENTS = {
   main: ["#04010A", "#090312", "#000000"] as const,
   soft: ["#1A0633", "#0A0117", "#000000"] as const,
